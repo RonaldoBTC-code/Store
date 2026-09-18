@@ -1,0 +1,25 @@
+# Dependencies and build
+**/node_modules/
+**/.next/
+**/.medusa/
+**/.turbo/
+**/dist/
+**/build/
+**/.cache/
+
+# Secrets and local env
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Logs and OS
+*.log
+.DS_Store
+Thumbs.db
+
+# One-off admin loader with local credentials
+store/scripts/load-cap-products.mjs
+
+# Duplicate generated product photos (source lives in Producto/)
+store/apps/backend/static/*.jpg
+store/apps/backend/static/*-alt.png

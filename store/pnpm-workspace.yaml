@@ -1,0 +1,15 @@
+packages:
+  - "apps/**"
+  - "!apps/backend/.medusa/**"
+
+overrides:
+  "@types/react": "19.0.5"
+  "@types/react-dom": "19.0.5"
+
+# pnpm 11+
+allowBuilds:
+  "@medusajs/telemetry": true
+
+# pnpm 10.x
+onlyBuiltDependencies:
+  - "@medusajs/telemetry"
