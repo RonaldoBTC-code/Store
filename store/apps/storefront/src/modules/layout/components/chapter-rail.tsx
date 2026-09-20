@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from "react"
 import { usePathname } from "next/navigation"
-import { HOME_CHAPTERS } from "@modules/home/components/editorial/chapters"
+import {
+  HOME_CHAPTERS,
+  type HomeChapterId,
+} from "@modules/home/components/editorial/chapters"
 
 const isCountryHome = (pathname: string) => /^\/[a-z]{2}\/?$/.test(pathname)
 
@@ -12,7 +15,7 @@ const isCountryHome = (pathname: string) => /^\/[a-z]{2}\/?$/.test(pathname)
  */
 const ChapterRail = () => {
   const pathname = usePathname()
-  const [activeId, setActiveId] = useState(HOME_CHAPTERS[0].id)
+  const [activeId, setActiveId] = useState<HomeChapterId>(HOME_CHAPTERS[0].id)
 
   useEffect(() => {
     if (!isCountryHome(pathname)) {
@@ -23,7 +26,7 @@ const ChapterRail = () => {
 
     const handleScroll = () => {
       const marker = window.innerHeight * 0.38
-      let current = HOME_CHAPTERS[0].id
+      let current: HomeChapterId = HOME_CHAPTERS[0].id
 
       HOME_CHAPTERS.forEach((chapter) => {
         const node = document.getElementById(chapter.id)

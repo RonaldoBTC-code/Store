@@ -91,6 +91,7 @@ export function resolveProductGallery(
       {
         id: `packshot-${packshot.handle}`,
         url: packshot.png,
+        rank: 0,
       },
     ]
   }
