@@ -11,14 +11,14 @@ import FrameCorners from "./frame-corners"
 const TAKES = [
   {
     src: "/editorial/scroll/transparente.mp4",
-    poster: "/editorial/scroll/03.png",
+    poster: "/editorial/scroll/transparente-poster.jpg",
     kicker: "04 / Loop — Take 01",
     title: "Transparente",
     copy: "Corte de estudio. La gorra flota y da la vuelta.",
   },
   {
     src: "/editorial/scroll/transparente-2.mp4",
-    poster: "/editorial/scroll/02.png",
+    poster: "/editorial/scroll/transparente-2-poster.jpg",
     kicker: "04 / Loop — Take 02",
     title: "Studio",
     copy: "Segunda toma. Misma silueta, otra luz.",
@@ -90,7 +90,7 @@ const FilmChapter = () => {
         </p>
 
         <div className="relative mx-auto flex w-full max-w-4xl flex-1 items-center px-6 py-16 small:px-10">
-          <div className="relative aspect-video w-full overflow-hidden border border-white/15 bg-ink-900">
+          <div className="relative aspect-video w-full overflow-hidden border border-white/15 bg-white">
             {TAKES.map((item, index) =>
               prefersReducedMotion || index === active ? (
                 <div

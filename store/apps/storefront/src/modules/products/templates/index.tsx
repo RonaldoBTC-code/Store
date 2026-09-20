@@ -10,8 +10,6 @@ import SkeletonRelatedProducts from "@modules/skeletons/templates/skeleton-relat
 import { notFound } from "next/navigation"
 import { HttpTypes } from "@medusajs/types"
 
-import ProductActionsWrapper from "./product-actions-wrapper"
-
 type ProductTemplateProps = {
   product: HttpTypes.StoreProduct
   region: HttpTypes.StoreRegion
@@ -44,17 +42,7 @@ const ProductTemplate: React.FC<ProductTemplateProps> = ({
         </div>
         <div className="flex w-full flex-col gap-y-12 py-8 small:sticky small:top-24 small:max-w-[300px] small:py-0">
           <ProductOnboardingCta />
-          <Suspense
-            fallback={
-              <ProductActions
-                disabled={true}
-                product={product}
-                region={region}
-              />
-            }
-          >
-            <ProductActionsWrapper id={product.id} region={region} />
-          </Suspense>
+          <ProductActions product={product} region={region} />
         </div>
       </div>
       <div

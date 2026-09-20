@@ -3,13 +3,35 @@
 @import "tailwindcss/utilities";
 
 @layer base {
+  :root,
+  html,
+  html[data-mode="dark"],
+  html.dark {
+    color-scheme: dark;
+    --bg-base: #0a0a0a;
+    --bg-subtle: #16161a;
+    --bg-component: #16161a;
+    --bg-field: #16161a;
+    --bg-field-hover: #1c1c22;
+    --fg-base: #f4f4f5;
+    --fg-subtle: rgba(244, 244, 245, 0.7);
+    --fg-muted: rgba(244, 244, 245, 0.45);
+    --fg-interactive: #5ce1ff;
+    --border-base: rgba(255, 255, 255, 0.12);
+    --border-interactive: rgba(92, 225, 255, 0.6);
+  }
+
   html {
     scroll-behavior: auto;
     scroll-padding-top: 4rem;
+    background-color: #0a0a0a !important;
   }
 
-  body {
-    background-color: #0a0a0a;
+  html,
+  body,
+  main {
+    background-color: #0a0a0a !important;
+    color: #f4f4f5;
   }
 }
 
@@ -46,9 +68,9 @@
   select:-webkit-autofill,
   select:-webkit-autofill:hover,
   select:-webkit-autofill:focus {
-    border: 1px solid #212121;
-    -webkit-text-fill-color: #212121;
-    -webkit-box-shadow: 0 0 0px 1000px #fff inset;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    -webkit-text-fill-color: #f4f4f5;
+    -webkit-box-shadow: 0 0 0px 1000px #16161a inset;
     transition: background-color 5000s ease-in-out 0s;
   }
 
@@ -149,7 +171,9 @@
   }
 
   .editorial-commerce {
+    background-color: #0a0a0a !important;
     color: rgba(255, 255, 255, 0.82);
+    min-height: calc(100dvh - 4rem);
   }
 
   .editorial-commerce .text-ui-fg-base,
@@ -175,5 +199,13 @@
 
   .editorial-commerce .bg-grey-50 {
     background-color: rgba(255, 255, 255, 0.45);
+  }
+
+  .editorial-commerce input:not([type="radio"]):not([type="checkbox"]),
+  .editorial-commerce textarea,
+  .editorial-commerce select {
+    background-color: #16161a !important;
+    color: #f4f4f5 !important;
+    border-color: rgba(255, 255, 255, 0.15) !important;
   }
 }

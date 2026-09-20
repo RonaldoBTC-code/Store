@@ -33,7 +33,7 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
       className={clx(
         "relative w-full overflow-hidden rounded-large transition-shadow ease-in-out duration-150",
         isDark
-          ? "border border-white/10 bg-ink-950 shadow-none group-hover:border-neon/40"
+          ? "border border-white/10 bg-white shadow-none group-hover:border-neon/40"
           : "bg-ui-bg-subtle shadow-elevation-card-rest group-hover:shadow-elevation-card-hover",
         className,
         {

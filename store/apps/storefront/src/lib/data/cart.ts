@@ -14,7 +14,6 @@ import {
   setCartId,
 } from "./cookies"
 import { getRegion } from "./regions"
-import { getLocale } from "./locale-actions"
 
 /**
  * Retrieves a cart by its ID. If no ID is provided, it will use the cart ID from the cookies.
@@ -53,7 +52,13 @@ export async function retrieveCart(cartId?: string, fields?: string) {
 }
 
 export async function getOrSetCart(countryCode: string) {
-  const region = await getRegion(countryCode)
+  let region: HttpTypes.StoreRegion | null = null
+
+  try {
+    region = await getRegion(countryCode)
+  } catch {
+    region = null
+  }
 
   if (!region) {
     throw new Error(`Region not found for country code: ${countryCode}`)
@@ -66,9 +71,8 @@ export async function getOrSetCart(countryCode: string) {
   }
 
   if (!cart) {
-    const locale = await getLocale()
     const cartResp = await sdk.store.cart.create(
-      { region_id: region.id, locale: locale || undefined },
+      { region_id: region.id },
       {},
       headers
     )
@@ -77,13 +81,17 @@ export async function getOrSetCart(countryCode: string) {
     await setCartId(cart.id)
 
     const cartCacheTag = await getCacheTag("carts")
-    revalidateTag(cartCacheTag)
+    if (cartCacheTag) {
+      revalidateTag(cartCacheTag)
+    }
   }
 
-  if (cart && cart?.region_id !== region.id) {
+  if (cart && cart.region_id !== region.id) {
     await sdk.store.cart.update(cart.id, { region_id: region.id }, {}, headers)
     const cartCacheTag = await getCacheTag("carts")
-    revalidateTag(cartCacheTag)
+    if (cartCacheTag) {
+      revalidateTag(cartCacheTag)
+    }
   }
 
   return cart

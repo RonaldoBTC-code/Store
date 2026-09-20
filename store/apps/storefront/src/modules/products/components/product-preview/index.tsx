@@ -11,7 +11,7 @@ export default async function ProductPreview({
   product,
   isFeatured,
   region: _region,
-  tone = "light",
+  tone = "dark",
 }: {
   product: HttpTypes.StoreProduct
   isFeatured?: boolean

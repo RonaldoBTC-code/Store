@@ -78,7 +78,7 @@ export function resolveProductThumbnail(
   product: Pick<HttpTypes.StoreProduct, "handle" | "thumbnail" | "images">
 ) {
   const packshot = getPackshot(product.handle)
-  return packshot?.png || product.thumbnail || product.images?.[0]?.url || null
+  return packshot?.jpg || product.thumbnail || product.images?.[0]?.url || null
 }
 
 export function resolveProductGallery(
@@ -90,7 +90,7 @@ export function resolveProductGallery(
     return [
       {
         id: `packshot-${packshot.handle}`,
-        url: packshot.png,
+        url: packshot.jpg,
         rank: 0,
       },
     ]

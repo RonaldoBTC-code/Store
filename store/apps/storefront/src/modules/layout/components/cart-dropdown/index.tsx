@@ -95,7 +95,7 @@ const CartDropdown = ({
         >
           <PopoverPanel
             static
-            className="hidden small:block absolute top-[calc(100%+1px)] right-0 z-50 bg-white border-x border-b border-gray-200 w-[420px] text-ui-fg-base"
+            className="absolute right-0 top-[calc(100%+1px)] z-50 hidden w-[420px] border-x border-b border-white/10 bg-ink-950 text-white small:block"
             data-testid="nav-cart-dropdown"
           >
             <div className="p-4 flex items-center justify-center">
@@ -124,6 +124,7 @@ const CartDropdown = ({
                             thumbnail={item.thumbnail}
                             images={item.variant?.product?.images}
                             size="square"
+                            tone="dark"
                           />
                         </LocalizedClientLink>
                         <div className="flex flex-col justify-between flex-1">
@@ -172,7 +173,7 @@ const CartDropdown = ({
                 </div>
                 <div className="p-4 flex flex-col gap-y-4 text-small-regular">
                   <div className="flex items-center justify-between">
-                    <span className="text-ui-fg-base font-semibold">
+                    <span className="font-semibold text-white">
                       Subtotal{" "}
                       <span className="font-normal">(excl. taxes)</span>
                     </span>
@@ -189,7 +190,7 @@ const CartDropdown = ({
                   </div>
                   <LocalizedClientLink
                     href="/cart"
-                    className="inline-flex h-12 w-full items-center justify-center rounded-md bg-black px-6 text-lg font-medium text-white hover:bg-gray-800"
+                    className="editorial-hud inline-flex h-12 w-full items-center justify-center rounded-full border border-neon/60 bg-neon/10 px-6 text-neon hover:bg-neon hover:text-ink-950"
                     data-testid="go-to-cart-button"
                     onClick={close}
                   >
@@ -207,7 +208,7 @@ const CartDropdown = ({
                   <div>
                     <LocalizedClientLink
                       href="/store"
-                      className="inline-flex h-10 items-center justify-center rounded-md bg-black px-4 font-medium text-white hover:bg-gray-800"
+                      className="editorial-hud inline-flex h-10 items-center justify-center rounded-full border border-neon/60 bg-neon/10 px-4 text-neon hover:bg-neon hover:text-ink-950"
                       onClick={close}
                     >
                       <span className="sr-only">Go to all products page</span>
