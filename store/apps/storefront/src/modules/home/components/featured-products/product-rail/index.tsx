@@ -48,7 +48,7 @@ export default async function ProductRail({
           href={`/collections/${collection.handle}`}
           className={
             isDark
-              ? "editorial-hud text-neon transition hover:shadow-glow-sm"
+              ? "editorial-hud relative z-10 text-neon transition hover:shadow-glow-sm"
               : "text-ui-fg-interactive"
           }
         >

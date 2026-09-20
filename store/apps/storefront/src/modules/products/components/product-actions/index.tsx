@@ -53,6 +53,10 @@ export default function ProductActions({
       return
     }
 
+    if (product.variants.length === 1) {
+      return product.variants[0]
+    }
+
     return product.variants.find((v) => {
       const variantOptions = optionsAsKeymap(v.options)
       return isEqual(variantOptions, options)
@@ -69,6 +73,10 @@ export default function ProductActions({
 
   //check if the selected options produce a valid variant
   const isValidVariant = useMemo(() => {
+    if ((product.variants?.length ?? 0) === 1) {
+      return true
+    }
+
     return product.variants?.some((v) => {
       const variantOptions = optionsAsKeymap(v.options)
       return isEqual(variantOptions, options)
@@ -163,6 +171,7 @@ export default function ProductActions({
         <ProductPrice product={product} variant={selectedVariant} />
 
         <Button
+          type="button"
           onClick={handleAddToCart}
           disabled={
             !inStock ||
@@ -172,7 +181,7 @@ export default function ProductActions({
             !isValidVariant
           }
           variant="primary"
-          className="w-full h-10"
+          className="editorial-hud h-12 w-full rounded-full border border-neon/60 bg-neon/10 text-neon shadow-glow-sm hover:bg-neon hover:text-ink-950 hover:shadow-glow"
           isLoading={isAdding}
           data-testid="add-product-button"
         >

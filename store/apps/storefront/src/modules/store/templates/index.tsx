@@ -24,27 +24,34 @@ const StoreTemplate = ({
 
   return (
     <div
-      className="flex flex-col small:flex-row small:items-start py-6 content-container bg-white text-ui-fg-base"
+      className="editorial-commerce bg-ink-950 text-white"
       data-testid="category-container"
     >
-      <RefinementList sortBy={sort} />
-      <div className="w-full">
-        <div className="mb-8 text-2xl-semi">
-          <h1 data-testid="store-page-title">{COLLECTION_SEO.h1}</h1>
-          {COLLECTION_SEO.intro && (
-            <p className="mt-3 max-w-2xl text-base-regular font-normal text-ui-fg-subtle">
-              {COLLECTION_SEO.intro}
-            </p>
-          )}
+      <div className="content-container flex flex-col py-10 small:flex-row small:items-start small:py-16">
+        <RefinementList sortBy={sort} />
+        <div className="w-full">
+          <div className="mb-8">
+            <h1
+              className="font-display text-4xl font-extrabold tracking-tight text-white small:text-6xl"
+              data-testid="store-page-title"
+            >
+              {COLLECTION_SEO.h1}
+            </h1>
+            {COLLECTION_SEO.intro && (
+              <p className="mt-3 max-w-2xl text-base-regular font-normal text-white/65">
+                {COLLECTION_SEO.intro}
+              </p>
+            )}
+          </div>
+          <Suspense fallback={<SkeletonProductGrid />}>
+            <PaginatedProducts
+              sortBy={sort}
+              page={pageNumber}
+              countryCode={countryCode}
+              optionValueIds={optionValueIds}
+            />
+          </Suspense>
         </div>
-        <Suspense fallback={<SkeletonProductGrid />}>
-          <PaginatedProducts
-            sortBy={sort}
-            page={pageNumber}
-            countryCode={countryCode}
-            optionValueIds={optionValueIds}
-          />
-        </Suspense>
       </div>
     </div>
   )

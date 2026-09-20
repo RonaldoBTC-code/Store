@@ -31,6 +31,7 @@ const ProductTabs = ({ product }: ProductTabsProps) => {
             key={i}
             title={tab.label}
             headingSize="medium"
+            className="border-white/10"
             value={tab.label}
           >
             {tab.component}

@@ -33,6 +33,7 @@ const EditorialMedia = ({
       alt={alt}
       fill
       priority={priority}
+      loading={priority ? "eager" : "lazy"}
       sizes={sizes}
       className={`${objectFit === "contain" ? "object-contain object-center" : "object-cover object-center"} ${className ?? ""}`}
       onError={() => {

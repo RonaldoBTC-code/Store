@@ -70,14 +70,14 @@ const MobileActions: React.FC<MobileActionsProps> = ({
           leaveTo="opacity-0"
         >
           <div
-            className="bg-white flex flex-col gap-y-3 justify-center items-center text-large-regular p-4 h-full w-full border-t border-gray-200"
+            className="flex h-full w-full flex-col items-center justify-center gap-y-3 border-t border-white/10 bg-ink-950 p-4 text-large-regular text-white"
             data-testid="mobile-actions"
           >
             <div className="flex items-center gap-x-2">
               <span data-testid="mobile-title">{product.title}</span>
               <span>—</span>
               {selectedPrice ? (
-                <div className="flex items-end gap-x-2 text-ui-fg-base">
+                <div className="flex items-end gap-x-2 text-white">
                   {selectedPrice.price_type === "sale" && (
                     <p>
                       <span className="line-through text-small-regular">

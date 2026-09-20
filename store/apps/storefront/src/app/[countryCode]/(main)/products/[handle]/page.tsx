@@ -4,6 +4,7 @@ import { listProducts } from "@lib/data/products"
 import { getRegion, listRegions } from "@lib/data/regions"
 import ProductTemplate from "@modules/products/templates"
 import { HttpTypes } from "@medusajs/types"
+import { resolveProductGallery } from "@lib/util/catalog"
 import { getProductSeo, metadataFromCopy } from "@lib/seo/copy"
 
 type Props = {
@@ -120,14 +121,17 @@ export default async function ProductPage(props: Props) {
     notFound()
   }
 
-  const images = getImagesForVariant(pricedProduct, selectedVariantId)
+  const images = resolveProductGallery(
+    pricedProduct,
+    getImagesForVariant(pricedProduct, selectedVariantId)
+  )
 
   return (
     <ProductTemplate
       product={pricedProduct}
       region={region}
       countryCode={params.countryCode}
-      images={images ?? []}
+      images={images}
     />
   )
 }

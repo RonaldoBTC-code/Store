@@ -18,18 +18,22 @@ export default async function Home(props: {
 }) {
   const params = await props.params
   const { countryCode } = params
-  const region = await getRegion(countryCode)
 
-  if (!region) {
-    return null
-  }
+  let region = null
+  let collections: Awaited<ReturnType<typeof listCollections>>["collections"] =
+    []
 
-  const { collections } = await listCollections({
-    fields: "id, handle, title",
-  })
-
-  if (!collections) {
-    return null
+  try {
+    region = await getRegion(countryCode)
+    if (region) {
+      const listed = await listCollections({
+        fields: "id, handle, title",
+      })
+      collections = listed.collections ?? []
+    }
+  } catch {
+    region = null
+    collections = []
   }
 
   return (
@@ -40,7 +44,7 @@ export default async function Home(props: {
       <FilmChapter />
       <section
         id="collection"
-        className="border-t border-white/10 bg-ink-950 py-8"
+        className="relative z-10 border-t border-white/10 bg-ink-950 py-8"
       >
         <div className="content-container pt-16">
           <p className="editorial-hud text-neon">05 / Colección</p>
@@ -49,13 +53,15 @@ export default async function Home(props: {
           </h2>
         </div>
         <PackshotGallery />
-        <ul className="flex flex-col">
-          <FeaturedProducts
-            collections={collections}
-            region={region}
-            tone="dark"
-          />
-        </ul>
+        {region && collections.length > 0 && (
+          <ul className="flex flex-col">
+            <FeaturedProducts
+              collections={collections}
+              region={region}
+              tone="dark"
+            />
+          </ul>
+        )}
       </section>
     </EditorialShell>
   )

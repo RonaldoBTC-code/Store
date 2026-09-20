@@ -42,7 +42,7 @@ const EditorialHero = () => {
         </div>
       </div>
       <div
-        className="absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/40 to-ink-950/20"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/40 to-ink-950/20"
         aria-hidden="true"
       />
 

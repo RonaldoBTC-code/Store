@@ -77,7 +77,7 @@ const FilmChapter = () => {
         className={
           prefersReducedMotion
             ? "relative flex min-h-[calc(100dvh-4rem)] flex-col justify-end overflow-hidden"
-            : "sticky top-16 flex h-[calc(100dvh-4rem)] flex-col justify-end overflow-hidden"
+            : "editorial-sticky-stage sticky top-16 flex h-[calc(100dvh-4rem)] flex-col justify-end overflow-hidden"
         }
       >
         <FrameCorners />
@@ -108,6 +108,7 @@ const FilmChapter = () => {
                     poster={item.poster}
                     className="object-cover"
                     label="Dad hat Gato Gang en loop de estudio"
+                    active={index === active}
                   />
                 </div>
               ) : null

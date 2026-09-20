@@ -2,13 +2,11 @@
 
 import {
   Popover,
-  PopoverButton,
   PopoverPanel,
   Transition,
 } from "@headlessui/react"
 import { convertToLocale } from "@lib/util/money"
 import { HttpTypes } from "@medusajs/types"
-import { Button } from "@modules/common/components/ui"
 import DeleteButton from "@modules/common/components/delete-button"
 import LineItemOptions from "@modules/common/components/line-item-options"
 import LineItemPrice from "@modules/common/components/line-item-price"
@@ -75,18 +73,16 @@ const CartDropdown = ({
 
   return (
     <div
-      className="h-full z-50"
+      className="relative z-50 h-full"
       onMouseEnter={openAndCancel}
       onMouseLeave={close}
     >
-      <Popover className="relative h-full">
-        <PopoverButton className="h-full">
-          <LocalizedClientLink
-            className="transition hover:text-neon"
-            href="/cart"
-            data-testid="nav-cart-link"
-          >{`Cart (${totalItems})`}</LocalizedClientLink>
-        </PopoverButton>
+      <LocalizedClientLink
+        className="flex h-full items-center transition hover:text-neon"
+        href="/cart"
+        data-testid="nav-cart-link"
+      >{`Cart (${totalItems})`}</LocalizedClientLink>
+      <Popover className="relative h-0">
         <Transition
           show={cartDropdownOpen}
           as={Fragment}
@@ -99,7 +95,7 @@ const CartDropdown = ({
         >
           <PopoverPanel
             static
-            className="hidden small:block absolute top-[calc(100%+1px)] right-0 bg-white border-x border-b border-gray-200 w-[420px] text-ui-fg-base"
+            className="hidden small:block absolute top-[calc(100%+1px)] right-0 z-50 bg-white border-x border-b border-gray-200 w-[420px] text-ui-fg-base"
             data-testid="nav-cart-dropdown"
           >
             <div className="p-4 flex items-center justify-center">
@@ -191,14 +187,13 @@ const CartDropdown = ({
                       })}
                     </span>
                   </div>
-                  <LocalizedClientLink href="/cart" passHref>
-                    <Button
-                      className="w-full"
-                      size="large"
-                      data-testid="go-to-cart-button"
-                    >
-                      Go to cart
-                    </Button>
+                  <LocalizedClientLink
+                    href="/cart"
+                    className="inline-flex h-12 w-full items-center justify-center rounded-md bg-black px-6 text-lg font-medium text-white hover:bg-gray-800"
+                    data-testid="go-to-cart-button"
+                    onClick={close}
+                  >
+                    Go to cart
                   </LocalizedClientLink>
                 </div>
               </>
@@ -210,11 +205,13 @@ const CartDropdown = ({
                   </div>
                   <span>Your shopping bag is empty.</span>
                   <div>
-                    <LocalizedClientLink href="/store">
-                      <>
-                        <span className="sr-only">Go to all products page</span>
-                        <Button onClick={close}>Explore products</Button>
-                      </>
+                    <LocalizedClientLink
+                      href="/store"
+                      className="inline-flex h-10 items-center justify-center rounded-md bg-black px-4 font-medium text-white hover:bg-gray-800"
+                      onClick={close}
+                    >
+                      <span className="sr-only">Go to all products page</span>
+                      Explore products
                     </LocalizedClientLink>
                   </div>
                 </div>

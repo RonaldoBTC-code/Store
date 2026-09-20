@@ -18,7 +18,7 @@ export default async function Nav() {
     <>
       <div className="sticky top-0 inset-x-0 z-50 group">
         <ScrollProgress />
-        <header className="relative h-16 mx-auto border-b border-white/10 bg-ink-950/70 backdrop-blur-xl">
+        <header className="relative z-50 h-16 mx-auto border-b border-white/10 bg-ink-950/70 backdrop-blur-xl">
           <nav className="content-container flex h-full w-full items-center justify-between font-hud text-[11px] uppercase tracking-hud text-white/70">
             <div className="flex h-full flex-1 basis-0 items-center">
               <div className="h-full text-white/80 hover:text-neon">

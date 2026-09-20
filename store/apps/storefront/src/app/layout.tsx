@@ -24,7 +24,7 @@ export const metadata: Metadata = {
 export default function RootLayout(props: { children: React.ReactNode }) {
   return (
     <html lang="en" data-mode="light" className={`${sora.variable} ${ibmPlexMono.variable}`}>
-      <body className="font-sans antialiased">
+      <body className="bg-ink-950 font-sans antialiased text-white">
         <main className="relative">{props.children}</main>
       </body>
     </html>
