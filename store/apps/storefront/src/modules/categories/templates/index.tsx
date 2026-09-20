@@ -8,6 +8,7 @@ import { SortOptions } from "@modules/store/components/refinement-list/sort-prod
 import PaginatedProducts from "@modules/store/templates/paginated-products"
 import LocalizedClientLink from "@modules/common/components/localized-client-link"
 import { HttpTypes } from "@medusajs/types"
+import { COLLECTION_SEO, isCategorySeoHandle } from "@lib/seo/copy"
 import { OptionValueIds } from "@lib/util/product-option-filters"
 
 export default function CategoryTemplate({
@@ -39,6 +40,10 @@ export default function CategoryTemplate({
 
   getParents(category)
 
+  const seo = isCategorySeoHandle(category.handle) ? COLLECTION_SEO : null
+  const heading = seo?.h1 ?? category.name
+  const intro = seo?.intro || category.description
+
   return (
     <div
       className="flex flex-col small:flex-row small:items-start py-6 content-container"
@@ -64,11 +69,11 @@ export default function CategoryTemplate({
                 /
               </span>
             ))}
-          <h1 data-testid="category-page-title">{category.name}</h1>
+          <h1 data-testid="category-page-title">{heading}</h1>
         </div>
-        {category.description && (
+        {intro && (
           <div className="mb-8 text-base-regular">
-            <p>{category.description}</p>
+            <p>{intro}</p>
           </div>
         )}
         {category.category_children && (

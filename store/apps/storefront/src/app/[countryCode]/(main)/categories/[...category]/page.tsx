@@ -7,6 +7,11 @@ import { HttpTypes, StoreRegion } from "@medusajs/types"
 import CategoryTemplate from "@modules/categories/templates"
 import { SortOptions } from "@modules/store/components/refinement-list/sort-products"
 import { parseOptionValueIds } from "@lib/util/product-option-filters"
+import {
+  COLLECTION_SEO,
+  isCategorySeoHandle,
+  metadataFromCopy,
+} from "@lib/seo/copy"
 
 type Props = {
   params: Promise<{ category: string[]; countryCode: string }>
@@ -51,12 +56,21 @@ export async function generateMetadata(props: Props): Promise<Metadata> {
   try {
     const productCategory = await getCategoryByHandle(params.category)
 
-    const title = productCategory.name + " | Medusa Store"
+    if (isCategorySeoHandle(params.category)) {
+      return {
+        ...metadataFromCopy(COLLECTION_SEO),
+        alternates: {
+          canonical: `${params.category.join("/")}`,
+        },
+      }
+    }
 
-    const description = productCategory.description ?? `${title} category.`
+    const title = `${productCategory.name} | Gato Gang`
+    const description =
+      productCategory.description ?? `${productCategory.name} category.`
 
     return {
-      title: `${title} | Medusa Store`,
+      title,
       description,
       alternates: {
         canonical: `${params.category.join("/")}`,

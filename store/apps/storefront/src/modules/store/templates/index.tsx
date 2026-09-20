@@ -1,5 +1,6 @@
 import { Suspense } from "react"
 
+import { COLLECTION_SEO } from "@lib/seo/copy"
 import { OptionValueIds } from "@lib/util/product-option-filters"
 import SkeletonProductGrid from "@modules/skeletons/templates/skeleton-product-grid"
 import RefinementList from "@modules/store/components/refinement-list"
@@ -29,7 +30,12 @@ const StoreTemplate = ({
       <RefinementList sortBy={sort} />
       <div className="w-full">
         <div className="mb-8 text-2xl-semi">
-          <h1 data-testid="store-page-title">All products</h1>
+          <h1 data-testid="store-page-title">{COLLECTION_SEO.h1}</h1>
+          {COLLECTION_SEO.intro && (
+            <p className="mt-3 max-w-2xl text-base-regular font-normal text-ui-fg-subtle">
+              {COLLECTION_SEO.intro}
+            </p>
+          )}
         </div>
         <Suspense fallback={<SkeletonProductGrid />}>
           <PaginatedProducts

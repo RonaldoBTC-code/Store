@@ -7,6 +7,11 @@ import { StoreCollection, StoreRegion } from "@medusajs/types"
 import CollectionTemplate from "@modules/collections/templates"
 import { SortOptions } from "@modules/store/components/refinement-list/sort-products"
 import { parseOptionValueIds } from "@lib/util/product-option-filters"
+import {
+  COLLECTION_SEO,
+  isCollectionSeoHandle,
+  metadataFromCopy,
+} from "@lib/seo/copy"
 
 type Props = {
   params: Promise<{ handle: string; countryCode: string }>
@@ -62,12 +67,14 @@ export async function generateMetadata(props: Props): Promise<Metadata> {
     notFound()
   }
 
-  const metadata = {
-    title: `${collection.title} | Medusa Store`,
-    description: `${collection.title} collection`,
-  } as Metadata
+  if (isCollectionSeoHandle(collection.handle)) {
+    return metadataFromCopy(COLLECTION_SEO)
+  }
 
-  return metadata
+  return {
+    title: `${collection.title} | Gato Gang`,
+    description: `${collection.title} collection`,
+  }
 }
 
 export default async function CollectionPage(props: Props) {

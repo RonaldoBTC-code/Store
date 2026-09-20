@@ -4,6 +4,7 @@ import { listProducts } from "@lib/data/products"
 import { getRegion, listRegions } from "@lib/data/regions"
 import ProductTemplate from "@modules/products/templates"
 import { HttpTypes } from "@medusajs/types"
+import { getProductSeo, metadataFromCopy } from "@lib/seo/copy"
 
 type Props = {
   params: Promise<{ countryCode: string; handle: string }>
@@ -87,12 +88,13 @@ export async function generateMetadata(props: Props): Promise<Metadata> {
     notFound()
   }
 
+  const seo = getProductSeo(handle, product.title)
+  const metadata = metadataFromCopy(seo)
+
   return {
-    title: `${product.title} | Medusa Store`,
-    description: `${product.title}`,
+    ...metadata,
     openGraph: {
-      title: `${product.title} | Medusa Store`,
-      description: `${product.title}`,
+      ...metadata.openGraph,
       images: product.thumbnail ? [product.thumbnail] : [],
     },
   }

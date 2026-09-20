@@ -3,11 +3,9 @@ import { Metadata } from "next"
 import { parseOptionValueIds } from "@lib/util/product-option-filters"
 import { SortOptions } from "@modules/store/components/refinement-list/sort-products"
 import StoreTemplate from "@modules/store/templates"
+import { COLLECTION_SEO, metadataFromCopy } from "@lib/seo/copy"
 
-export const metadata: Metadata = {
-  title: "Store",
-  description: "Explore all of our products.",
-}
+export const metadata: Metadata = metadataFromCopy(COLLECTION_SEO)
 
 type StorePageSearchParams = Record<string, string | string[] | undefined> & {
   sortBy?: SortOptions
