@@ -12,6 +12,7 @@ import { PACKSHOTS } from "./packshots"
 type SequenceFrame = {
   kind: "image" | "video"
   src: string
+  fallback?: string
   poster?: string
   kicker: string
   title: string
@@ -46,8 +47,8 @@ const FRAMES: SequenceFrame[] = [
   },
   {
     kind: "video",
-    src: "/editorial/scroll/transparente.mp4",
-    poster: "/editorial/scroll/03.png",
+    src: "/editorial/scroll/transparente-2.mp4",
+    poster: "/editorial/scroll/transparente-2-poster.jpg",
     kicker: "02 / Giro — 04",
     title: "Transición",
     copy: "La gorra da la vuelta. Diez segundos de corte.",
@@ -72,7 +73,7 @@ const FRAMES: SequenceFrame[] = [
   {
     kind: "video",
     src: "/editorial/scroll/transparente-2.mp4",
-    poster: "/editorial/scroll/02.png",
+    poster: "/editorial/scroll/transparente-2-poster.jpg",
     kicker: "02 / Giro — 07",
     title: "Studio",
     copy: "Otra toma. Misma silueta, otra luz.",
@@ -81,6 +82,7 @@ const FRAMES: SequenceFrame[] = [
   ...PACKSHOTS.map((packshot, index) => ({
     kind: "image" as const,
     src: packshot.png,
+    fallback: packshot.png,
     kicker: `02 / Giro — ${String(index + 8).padStart(2, "0")}`,
     title: packshot.label,
     copy: "Dad hat negra, parche bordado, talla única.",
@@ -89,6 +91,7 @@ const FRAMES: SequenceFrame[] = [
 ]
 
 const FRAME_VH = 80
+const PRELOAD_RADIUS = 1
 
 const SequenceStage = ({
   frame,
@@ -100,18 +103,15 @@ const SequenceStage = ({
   priority?: boolean
 }) => {
   if (frame.kind === "video") {
-    if (!active) {
-      return null
-    }
-
     return (
       <div className="absolute inset-0 flex items-center justify-center px-6 small:px-16">
-        <div className="relative aspect-video w-full max-w-4xl overflow-hidden border border-white/15 bg-ink-900">
+        <div className="relative aspect-video w-full max-w-4xl overflow-hidden border border-white/15 bg-ink-950">
           <EditorialVideo
             src={frame.src}
             poster={frame.poster}
             label={frame.alt}
             className="object-cover"
+            active={active}
           />
         </div>
       </div>
@@ -119,19 +119,22 @@ const SequenceStage = ({
   }
 
   return (
-    <EditorialMedia
-      src={frame.src}
-      fallback={frame.src}
-      alt={frame.alt}
-      objectFit="contain"
-      sizes="100vw"
-      priority={priority}
-    />
+    <div className="absolute inset-0 bg-ink-950">
+      <EditorialMedia
+        src={frame.src}
+        fallback={frame.fallback || frame.src}
+        alt={frame.alt}
+        objectFit="contain"
+        sizes="100vw"
+        priority={priority}
+      />
+    </div>
   )
 }
 
 /**
  * Pinned chapter: stills and loop videos advance in sequence as the user scrolls.
+ * Only the active frame plus one neighbor stay mounted to keep scroll light.
  */
 const ScrollSequence = () => {
   const prefersReducedMotion = useReducedMotion()
@@ -156,6 +159,7 @@ const ScrollSequence = () => {
         trigger: section,
         start: "top top+=64",
         end: "bottom bottom",
+        invalidateOnRefresh: true,
         onUpdate: (self) => {
           const next = Math.min(
             FRAMES.length - 1,
@@ -187,7 +191,7 @@ const ScrollSequence = () => {
               key={`${item.kind}-${item.src}`}
               className="grid border-t border-white/10 small:grid-cols-2"
             >
-              <div className="relative min-h-[70vh] bg-ink-950">
+              <div className="relative min-h-[70vh] overflow-hidden bg-ink-950">
                 {item.kind === "video" ? (
                   <EditorialVideo
                     src={item.src}
@@ -198,7 +202,7 @@ const ScrollSequence = () => {
                 ) : (
                   <EditorialMedia
                     src={item.src}
-                    fallback={item.src}
+                    fallback={item.fallback || item.src}
                     alt={item.alt}
                     objectFit="contain"
                     sizes="(min-width: 1024px) 50vw, 100vw"
@@ -226,21 +230,28 @@ const ScrollSequence = () => {
       className="relative border-t border-white/10 bg-ink-950"
       style={{ height: `${FRAMES.length * FRAME_VH}vh` }}
     >
-      <div className="sticky top-16 h-[calc(100dvh-4rem)] overflow-hidden">
-        {FRAMES.map((item, index) => (
-          <div
-            key={`${item.kind}-${item.src}`}
-            className="absolute inset-0 transition-opacity duration-300"
-            style={{ opacity: index === active ? 1 : 0 }}
-            aria-hidden={index !== active}
-          >
-            <SequenceStage
-              frame={item}
-              active={index === active}
-              priority={index < 2}
-            />
-          </div>
-        ))}
+      <div className="editorial-sticky-stage sticky top-16 h-[calc(100dvh-4rem)] overflow-hidden">
+        {FRAMES.map((item, index) => {
+          const nearby = Math.abs(index - active) <= PRELOAD_RADIUS
+          if (!nearby) {
+            return null
+          }
+
+          return (
+            <div
+              key={`${item.kind}-${item.src}`}
+              className="pointer-events-none absolute inset-0"
+              style={{ opacity: index === active ? 1 : 0 }}
+              aria-hidden={index !== active}
+            >
+              <SequenceStage
+                frame={item}
+                active={index === active}
+                priority={index < 2}
+              />
+            </div>
+          )
+        })}
 
         <div
           className="pointer-events-none absolute inset-0 bg-gradient-to-t from-ink-950 via-transparent to-ink-950/40"
@@ -249,13 +260,13 @@ const ScrollSequence = () => {
 
         <FrameCorners />
 
-        <div className="absolute left-6 top-6 z-10 flex items-center gap-3 small:left-10 small:top-8">
+        <div className="pointer-events-none absolute left-6 top-6 z-10 flex items-center gap-3 small:left-10 small:top-8">
           <p className="editorial-hud text-white/50">Gato Gang</p>
           <span className="h-px w-8 bg-white/25" aria-hidden="true" />
           <p className="editorial-hud text-neon">{frame.kicker}</p>
         </div>
 
-        <p className="editorial-hud absolute right-6 top-6 z-10 text-white/45 small:right-10 small:top-8">
+        <p className="editorial-hud pointer-events-none absolute right-6 top-6 z-10 text-white/45 small:right-10 small:top-8">
           {String(active + 1).padStart(2, "0")} / {String(FRAMES.length).padStart(2, "0")}
         </p>
 
@@ -264,7 +275,7 @@ const ScrollSequence = () => {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.28 }}
-          className="absolute bottom-10 left-6 z-10 max-w-lg small:bottom-14 small:left-10"
+          className="pointer-events-none absolute bottom-10 left-6 z-10 max-w-lg small:bottom-14 small:left-10"
         >
           <h2 className="font-display text-4xl font-extrabold leading-[0.92] tracking-tight small:text-6xl">
             {frame.title}

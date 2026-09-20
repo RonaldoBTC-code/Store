@@ -112,34 +112,19 @@ export default async function Footer() {
               <span className="txt-small-plus text-white">Gato Gang</span>
               <ul className="grid grid-cols-1 gap-y-2 text-white/55 txt-small">
                 <li>
-                  <a
-                    href="https://github.com/medusajs"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="hover:text-neon"
-                  >
-                    GitHub
-                  </a>
+                  <LocalizedClientLink href="/store" className="hover:text-neon">
+                    Store
+                  </LocalizedClientLink>
                 </li>
                 <li>
-                  <a
-                    href="https://docs.medusajs.com"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="hover:text-neon"
-                  >
-                    Documentation
-                  </a>
+                  <LocalizedClientLink href="/account" className="hover:text-neon">
+                    Account
+                  </LocalizedClientLink>
                 </li>
                 <li>
-                  <a
-                    href="https://github.com/medusajs/dtc-starter"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="hover:text-neon"
-                  >
-                    Source code
-                  </a>
+                  <LocalizedClientLink href="/cart" className="hover:text-neon">
+                    Cart
+                  </LocalizedClientLink>
                 </li>
               </ul>
             </div>

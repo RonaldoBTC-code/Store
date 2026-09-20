@@ -19,27 +19,19 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
   thumbnail,
   images,
   size = "small",
-  isFeatured,
-  tone = "light",
   alt = "Gato Gang dad hat",
   className,
   "data-testid": dataTestid,
 }) => {
   const initialImage = thumbnail || images?.[0]?.url
-  const isDark = tone === "dark"
 
   return (
     <div
       className={clx(
-        "relative w-full overflow-hidden rounded-large transition-shadow ease-in-out duration-150",
-        isDark
-          ? "border border-white/10 bg-ink-950 shadow-none group-hover:border-neon/40"
-          : "bg-ui-bg-subtle shadow-elevation-card-rest group-hover:shadow-elevation-card-hover",
+        "relative w-full overflow-hidden bg-transparent shadow-none",
         className,
         {
-          "aspect-[11/14]": isFeatured,
-          "aspect-[9/16]": !isFeatured && size !== "square",
-          "aspect-[1/1]": size === "square",
+          "aspect-[1/1]": true,
           "w-[180px]": size === "small",
           "w-[290px]": size === "medium",
           "w-[440px]": size === "large",
@@ -62,7 +54,7 @@ const ImageOrPlaceholder = ({
     <Image
       src={image}
       alt={alt || "Gato Gang dad hat"}
-      className="absolute inset-0 object-contain object-center p-3"
+      className="absolute inset-0 bg-transparent object-contain object-center p-3"
       draggable={false}
       quality={90}
       sizes="(max-width: 576px) 280px, (max-width: 768px) 360px, (max-width: 992px) 480px, 800px"

@@ -26,13 +26,16 @@ export default function CollectionTemplate({
   const seo = isCollectionSeoHandle(collection.handle) ? COLLECTION_SEO : null
 
   return (
-    <div className="flex flex-col small:flex-row small:items-start py-6 content-container">
+    <div className="editorial-commerce bg-ink-950 text-white">
+      <div className="content-container flex flex-col py-10 small:flex-row small:items-start small:py-16">
       <RefinementList sortBy={sort} hideOptionsPicker />
       <div className="w-full">
-        <div className="mb-8 text-2xl-semi">
-          <h1>{seo?.h1 ?? collection.title}</h1>
+        <div className="mb-8">
+          <h1 className="font-display text-4xl font-extrabold tracking-tight text-white small:text-6xl">
+            {seo?.h1 ?? collection.title}
+          </h1>
           {seo?.intro && (
-            <p className="mt-3 max-w-2xl text-base-regular font-normal text-ui-fg-subtle">
+            <p className="mt-3 max-w-2xl text-base-regular font-normal text-white/65">
               {seo.intro}
             </p>
           )}
@@ -52,6 +55,7 @@ export default function CollectionTemplate({
             optionValueIds={optionValueIds}
           />
         </Suspense>
+      </div>
       </div>
     </div>
   )

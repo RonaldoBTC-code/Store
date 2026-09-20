@@ -57,7 +57,7 @@ const OptionsPicker = ({
   return (
     <div className="flex flex-col gap-y-4">
       <div className="flex items-center justify-between px-1">
-        <span className="txt-compact-small-plus text-ui-fg-subtle">
+        <span className="txt-compact-small-plus text-white/45">
           Options
         </span>
       </div>
@@ -106,16 +106,16 @@ const OptionsPicker = ({
               <Accordion.Header>
                 <Accordion.Trigger className="flex w-full items-center justify-between py-3 text-left">
                   <div className="flex items-center gap-2">
-                    <span className="txt-compact-small-plus text-ui-fg-base">
+                    <span className="txt-compact-small-plus text-white">
                       {option.title || "Option"}
                     </span>
-                    <span className="txt-compact-small-plus text-ui-fg-muted">
+                    <span className="txt-compact-small-plus text-white/45">
                       ({selectedCount})
                     </span>
                   </div>
                   <span
                     className={clsx(
-                      "flex h-7 w-7 items-center justify-center text-ui-fg-muted transition-transform duration-150",
+                      "flex h-7 w-7 items-center justify-center text-white/45 transition-transform duration-150",
                       {
                         "rotate-180": isOpen,
                       }
@@ -135,11 +135,11 @@ const OptionsPicker = ({
                         key={value.id}
                         onClick={() => toggleValue(value.id)}
                         className={clsx(
-                          "border-ui-border-base border text-small-regular h-10 rounded-rounded px-3 flex items-center transition-colors duration-150",
+                          "border-white/15 border text-small-regular h-10 rounded-rounded px-3 flex items-center transition-colors duration-150",
                           {
-                            "border-ui-border-interactive text-ui-fg-base":
+                            "border-neon text-neon":
                               isSelected,
-                            "text-ui-fg-muted hover:text-ui-fg-base":
+                            "text-white/60 hover:text-white":
                               !isSelected,
                           }
                         )}

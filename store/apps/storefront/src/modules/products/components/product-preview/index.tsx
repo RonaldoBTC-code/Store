@@ -1,5 +1,6 @@
 import { Text } from "@modules/common/components/ui"
 import { getProductPrice } from "@lib/util/get-product-price"
+import { resolveProductThumbnail } from "@lib/util/catalog"
 import { HttpTypes } from "@medusajs/types"
 import LocalizedClientLink from "@modules/common/components/localized-client-link"
 import Thumbnail from "../thumbnail"
@@ -10,41 +11,25 @@ export default async function ProductPreview({
   product,
   isFeatured,
   region: _region,
-  tone = "light",
+  tone = "dark",
 }: {
   product: HttpTypes.StoreProduct
   isFeatured?: boolean
   region: HttpTypes.StoreRegion
   tone?: "light" | "dark"
 }) {
-  // const pricedProduct = await listProducts({
-  //   regionId: region.id,
-  //   queryParams: { id: [product.id!] },
-  // }).then(({ response }) => response.products[0])
-
-  // if (!pricedProduct) {
-  //   return null
-  // }
-
   const { cheapestPrice } = getProductPrice({
     product,
   })
   const packshot = getPackshot(product.handle)
-  const thumbnail = product.thumbnail || packshot?.png
-  const images =
-    product.images && product.images.length > 0
-      ? product.images
-      : packshot
-        ? [{ url: packshot.png }]
-        : product.images
+  const thumbnail = resolveProductThumbnail(product)
 
   return (
-    <LocalizedClientLink href={`/products/${product.handle}`} className="group">
+    <LocalizedClientLink href={`/products/${product.handle}`} className="group relative z-10">
       <div data-testid="product-wrapper">
         <Thumbnail
           thumbnail={thumbnail}
-          images={images}
-          size="full"
+          size="square"
           isFeatured={isFeatured}
           tone={tone}
           alt={packshot?.alt ?? product.title ?? "Gato Gang dad hat"}

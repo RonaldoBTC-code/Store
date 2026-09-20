@@ -46,9 +46,10 @@ export default function CategoryTemplate({
 
   return (
     <div
-      className="flex flex-col small:flex-row small:items-start py-6 content-container"
+      className="editorial-commerce bg-ink-950 text-white"
       data-testid="category-container"
     >
+    <div className="content-container flex flex-col py-10 small:flex-row small:items-start small:py-16">
       <RefinementList
         sortBy={sort}
         data-testid="sort-by-container"
@@ -60,7 +61,7 @@ export default function CategoryTemplate({
             parents.map((parent) => (
               <span key={parent.id} className="text-ui-fg-subtle">
                 <LocalizedClientLink
-                  className="mr-4 hover:text-black"
+                  className="mr-4 hover:text-neon"
                   href={`/categories/${parent.handle}`}
                   data-testid="sort-by-link"
                 >
@@ -69,7 +70,12 @@ export default function CategoryTemplate({
                 /
               </span>
             ))}
-          <h1 data-testid="category-page-title">{heading}</h1>
+          <h1
+            className="font-display text-4xl font-extrabold tracking-tight text-white"
+            data-testid="category-page-title"
+          >
+            {heading}
+          </h1>
         </div>
         {intro && (
           <div className="mb-8 text-base-regular">
@@ -104,6 +110,7 @@ export default function CategoryTemplate({
             optionValueIds={optionValueIds}
           />
         </Suspense>
+      </div>
       </div>
     </div>
   )

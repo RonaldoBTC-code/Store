@@ -16,6 +16,7 @@ export const listRegions = async () => {
       cache: "force-cache",
     })
     .then(({ regions }) => regions)
+    .catch(() => [])
 }
 
 export const retrieveRegion = async (id: string) => {

@@ -156,7 +156,7 @@ const HatAnatomy = () => {
       className="relative border-t border-white/10 bg-ink-900"
     >
       <div className="small:grid small:grid-cols-2">
-        <div className="relative flex min-h-[70vh] items-center justify-center overflow-hidden bg-ink-950 small:sticky small:top-16 small:h-[calc(100vh-4rem)] small:min-h-0">
+        <div className="editorial-sticky-stage relative flex min-h-[70vh] items-center justify-center overflow-hidden bg-ink-950 small:sticky small:top-16 small:h-[calc(100vh-4rem)] small:min-h-0">
           <div className="relative aspect-square w-[min(88%,34rem)]">
             <EditorialMedia
               src={src}

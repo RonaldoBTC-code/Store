@@ -4,7 +4,7 @@ import ProductRail from "@modules/home/components/featured-products/product-rail
 export default async function FeaturedProducts({
   collections,
   region,
-  tone = "light",
+  tone = "dark",
 }: {
   collections: HttpTypes.StoreCollection[]
   region: HttpTypes.StoreRegion

@@ -19,13 +19,23 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL(getBaseURL()),
+  title: {
+    default: "Gato Gang",
+    template: "%s",
+  },
 }
 
 export default function RootLayout(props: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-mode="light" className={`${sora.variable} ${ibmPlexMono.variable}`}>
-      <body className="font-sans antialiased">
-        <main className="relative">{props.children}</main>
+    <html
+      lang="en"
+      data-mode="dark"
+      className={`dark ${sora.variable} ${ibmPlexMono.variable} bg-ink-950`}
+    >
+      <body className="bg-ink-950 font-sans antialiased text-white">
+        <main className="relative min-h-dvh bg-ink-950 text-white">
+          {props.children}
+        </main>
       </body>
     </html>
   )

@@ -10,15 +10,15 @@ import FrameCorners from "./frame-corners"
 
 const TAKES = [
   {
-    src: "/editorial/scroll/transparente.mp4",
-    poster: "/editorial/scroll/03.png",
+    src: "/editorial/scroll/transparente-3-fondo-negro.mp4",
+    poster: "/editorial/scroll/transparente-3-fondo-negro-poster.jpg",
     kicker: "04 / Loop — Take 01",
     title: "Transparente",
     copy: "Corte de estudio. La gorra flota y da la vuelta.",
   },
   {
     src: "/editorial/scroll/transparente-2.mp4",
-    poster: "/editorial/scroll/02.png",
+    poster: "/editorial/scroll/transparente-2-poster.jpg",
     kicker: "04 / Loop — Take 02",
     title: "Studio",
     copy: "Segunda toma. Misma silueta, otra luz.",
@@ -77,7 +77,7 @@ const FilmChapter = () => {
         className={
           prefersReducedMotion
             ? "relative flex min-h-[calc(100dvh-4rem)] flex-col justify-end overflow-hidden"
-            : "sticky top-16 flex h-[calc(100dvh-4rem)] flex-col justify-end overflow-hidden"
+            : "editorial-sticky-stage sticky top-16 flex h-[calc(100dvh-4rem)] flex-col justify-end overflow-hidden"
         }
       >
         <FrameCorners />
@@ -90,7 +90,7 @@ const FilmChapter = () => {
         </p>
 
         <div className="relative mx-auto flex w-full max-w-4xl flex-1 items-center px-6 py-16 small:px-10">
-          <div className="relative aspect-video w-full overflow-hidden border border-white/15 bg-ink-900">
+          <div className="relative aspect-video w-full overflow-hidden border border-white/15 bg-ink-950">
             {TAKES.map((item, index) =>
               prefersReducedMotion || index === active ? (
                 <div
@@ -108,6 +108,7 @@ const FilmChapter = () => {
                     poster={item.poster}
                     className="object-cover"
                     label="Dad hat Gato Gang en loop de estudio"
+                    active={index === active}
                   />
                 </div>
               ) : null

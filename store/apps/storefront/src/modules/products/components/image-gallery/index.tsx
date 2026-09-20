@@ -1,27 +1,35 @@
 import { HttpTypes } from "@medusajs/types"
+import { PACKSHOTS } from "@modules/home/components/editorial/packshots"
 import Image from "next/image"
 
 type ImageGalleryProps = {
   images: HttpTypes.StoreProductImage[]
 }
 
+const altFor = (url: string | null | undefined, index: number) => {
+  const packshot = PACKSHOTS.find((item) =>
+    url?.includes(`${item.handle}-dad-hat-gato-gang`)
+  )
+  return packshot?.alt ?? `Product image ${index + 1}`
+}
+
 const ImageGallery = ({ images }: ImageGalleryProps) => {
   return (
-    <div className="flex items-start relative">
-      <div className="flex flex-col flex-1 small:mx-16 gap-y-4">
+    <div className="relative flex items-start">
+      <div className="flex w-full flex-1 flex-col gap-y-4 small:px-6">
         {images.map((image, index) => {
           return (
             <div
               key={image.id}
-              className="relative aspect-[29/34] w-full overflow-hidden rounded-large bg-ink-950"
+              className="relative aspect-square w-full overflow-hidden bg-transparent"
               id={image.id}
             >
               {!!image.url && (
                 <Image
                   src={image.url}
                   priority={index <= 2 ? true : false}
-                  className="absolute inset-0 object-contain object-center p-3"
-                  alt={`Product image ${index + 1}`}
+                  className="absolute inset-0 bg-transparent object-contain object-center p-4"
+                  alt={altFor(image.url, index)}
                   fill
                   sizes="(max-width: 576px) 280px, (max-width: 768px) 360px, (max-width: 992px) 480px, 800px"
                 />

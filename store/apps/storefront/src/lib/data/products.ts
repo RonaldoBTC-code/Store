@@ -1,6 +1,7 @@
 "use server"
 
 import { sdk } from "@lib/config"
+import { sanitizeCatalogProducts } from "@lib/util/catalog"
 import { OptionValueIds } from "@lib/util/product-option-filters"
 import { sortProducts } from "@lib/util/sort-products"
 import { HttpTypes } from "@medusajs/types"
@@ -79,12 +80,14 @@ export const listProducts = async ({
       }
     )
     .then(({ products, count }) => {
-      const nextPage = count > offset + limit ? pageParam + 1 : null
+      const sanitized = sanitizeCatalogProducts(products)
+      const removed = products.length - sanitized.length
+      const nextPage = count - removed > offset + limit ? pageParam + 1 : null
 
       return {
         response: {
-          products,
-          count,
+          products: sanitized,
+          count: Math.max(0, count - removed),
         },
         nextPage: nextPage,
         queryParams,

@@ -3,15 +3,35 @@
 @import "tailwindcss/utilities";
 
 @layer base {
-  html {
-    scroll-behavior: smooth;
-    scroll-padding-top: 4rem;
+  :root,
+  html,
+  html[data-mode="dark"],
+  html.dark {
+    color-scheme: dark;
+    --bg-base: #0a0a0a;
+    --bg-subtle: #16161a;
+    --bg-component: #16161a;
+    --bg-field: #16161a;
+    --bg-field-hover: #1c1c22;
+    --fg-base: #f4f4f5;
+    --fg-subtle: rgba(244, 244, 245, 0.7);
+    --fg-muted: rgba(244, 244, 245, 0.45);
+    --fg-interactive: #5ce1ff;
+    --border-base: rgba(255, 255, 255, 0.12);
+    --border-interactive: rgba(92, 225, 255, 0.6);
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    html {
-      scroll-behavior: auto;
-    }
+  html {
+    scroll-behavior: auto;
+    scroll-padding-top: 4rem;
+    background-color: #0a0a0a !important;
+  }
+
+  html,
+  body,
+  main {
+    background-color: #0a0a0a !important;
+    color: #f4f4f5;
   }
 }
 
@@ -48,9 +68,9 @@
   select:-webkit-autofill,
   select:-webkit-autofill:hover,
   select:-webkit-autofill:focus {
-    border: 1px solid #212121;
-    -webkit-text-fill-color: #212121;
-    -webkit-box-shadow: 0 0 0px 1000px #fff inset;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    -webkit-text-fill-color: #f4f4f5;
+    -webkit-box-shadow: 0 0 0px 1000px #16161a inset;
     transition: background-color 5000s ease-in-out 0s;
   }
 
@@ -123,18 +143,13 @@
     @apply text-[32px] leading-[44px] font-semibold;
   }
 
-  .editorial-grain {
-    position: relative;
+  .editorial-grain-layer,
+  .editorial-vignette {
+    pointer-events: none;
   }
 
-  .editorial-grain::after {
-    content: "";
-    pointer-events: none;
-    position: absolute;
-    inset: 0;
-    z-index: 15;
-    opacity: 0.07;
-    mix-blend-mode: overlay;
+  .editorial-grain-layer {
+    opacity: 0.045;
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 
@@ -148,5 +163,54 @@
       transparent 48%,
       rgba(0, 0, 0, 0.42) 100%
     );
+  }
+
+  .editorial-sticky-stage {
+    contain: paint;
+    transform: translateZ(0);
+  }
+
+  .editorial-commerce {
+    background-color: #0a0a0a !important;
+    color: rgba(255, 255, 255, 0.82);
+    min-height: calc(100dvh - 4rem);
+  }
+
+  .editorial-home img,
+  .editorial-commerce img {
+    background-color: transparent !important;
+  }
+
+  .editorial-commerce .text-ui-fg-base,
+  .editorial-commerce .text-ui-fg-subtle,
+  .editorial-commerce .text-ui-fg-muted,
+  .editorial-commerce .text-ui-fg-interactive {
+    color: inherit;
+  }
+
+  .editorial-commerce .border-grey-20,
+  .editorial-commerce .border-ui-border-base {
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .editorial-commerce .bg-ui-bg-subtle {
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+
+  .editorial-commerce .hover\:bg-grey-5:hover,
+  .editorial-commerce .active\:bg-grey-5:active {
+    background-color: rgba(255, 255, 255, 0.06);
+  }
+
+  .editorial-commerce .bg-grey-50 {
+    background-color: rgba(255, 255, 255, 0.45);
+  }
+
+  .editorial-commerce input:not([type="radio"]):not([type="checkbox"]),
+  .editorial-commerce textarea,
+  .editorial-commerce select {
+    background-color: #16161a !important;
+    color: #f4f4f5 !important;
+    border-color: rgba(255, 255, 255, 0.15) !important;
   }
 }

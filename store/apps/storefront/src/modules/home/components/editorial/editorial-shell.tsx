@@ -5,13 +5,21 @@ type EditorialShellProps = {
 }
 
 /**
- * Dark editorial wrapper with grain overlay for the Gato Gang homepage.
+ * Dark editorial wrapper. Grain and vignette stay viewport-fixed and
+ * below content so they never paint a tall blend layer or eat clicks.
  */
 const EditorialShell = ({ children }: EditorialShellProps) => {
   return (
-    <div className="editorial-grain relative bg-ink-950 text-white">
+    <div className="editorial-home relative bg-ink-950 text-white">
+      <div
+        className="editorial-grain-layer pointer-events-none fixed inset-0 z-[1]"
+        aria-hidden="true"
+      />
+      <div
+        className="editorial-vignette pointer-events-none fixed inset-0 z-[2]"
+        aria-hidden="true"
+      />
       <div className="relative z-10">{children}</div>
-      <div className="editorial-vignette pointer-events-none fixed inset-0 z-[16]" />
     </div>
   )
 }

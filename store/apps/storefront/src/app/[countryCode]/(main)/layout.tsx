@@ -38,7 +38,9 @@ export default async function PageLayout(props: { children: React.ReactNode }) {
           shippingOptions={shippingOptions}
         />
       )}
-      {props.children}
+      <div className="min-h-[calc(100dvh-4rem)] bg-ink-950 text-white">
+        {props.children}
+      </div>
       <Footer />
     </>
   )
