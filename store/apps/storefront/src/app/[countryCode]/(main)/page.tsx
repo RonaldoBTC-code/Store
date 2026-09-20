@@ -6,12 +6,9 @@ import EditorialHero from "@modules/home/components/editorial/hero"
 import HatAnatomy from "@modules/home/components/editorial/hat-anatomy"
 import { listCollections } from "@lib/data/collections"
 import { getRegion } from "@lib/data/regions"
+import { HOME_SEO, metadataFromCopy } from "@lib/seo/copy"
 
-export const metadata: Metadata = {
-  title: "Gato Gang | Dad Hats",
-  description:
-    "Dad hats negras con parche bordado. Street, suave y un poco pícara.",
-}
+export const metadata: Metadata = metadataFromCopy(HOME_SEO)
 
 export default async function Home(props: {
   params: Promise<{ countryCode: string }>
