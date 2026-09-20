@@ -1,4 +1,4 @@
-import { Container, clx } from "@modules/common/components/ui"
+import { clx } from "@modules/common/components/ui"
 import Image from "next/image"
 import React from "react"
 
@@ -9,6 +9,7 @@ type ThumbnailProps = {
   images?: { url?: string }[] | null
   size?: "small" | "medium" | "large" | "full" | "square"
   isFeatured?: boolean
+  tone?: "light" | "dark"
   className?: string
   "data-testid"?: string
 }
@@ -18,15 +19,20 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
   images,
   size = "small",
   isFeatured,
+  tone = "light",
   className,
   "data-testid": dataTestid,
 }) => {
   const initialImage = thumbnail || images?.[0]?.url
+  const isDark = tone === "dark"
 
   return (
-    <Container
+    <div
       className={clx(
-        "relative w-full overflow-hidden p-4 bg-ui-bg-subtle shadow-elevation-card-rest rounded-large group-hover:shadow-elevation-card-hover transition-shadow ease-in-out duration-150",
+        "relative w-full overflow-hidden rounded-large transition-shadow ease-in-out duration-150",
+        isDark
+          ? "border border-white/10 bg-ink-950 shadow-none group-hover:border-neon/40"
+          : "bg-ui-bg-subtle shadow-elevation-card-rest group-hover:shadow-elevation-card-hover",
         className,
         {
           "aspect-[11/14]": isFeatured,
@@ -41,7 +47,7 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
       data-testid={dataTestid}
     >
       <ImageOrPlaceholder image={initialImage} size={size} />
-    </Container>
+    </div>
   )
 }
 
@@ -53,9 +59,9 @@ const ImageOrPlaceholder = ({
     <Image
       src={image}
       alt="Thumbnail"
-      className="absolute inset-0 object-cover object-center"
+      className="absolute inset-0 object-contain object-center p-3"
       draggable={false}
-      quality={50}
+      quality={90}
       sizes="(max-width: 576px) 280px, (max-width: 768px) 360px, (max-width: 992px) 480px, 800px"
       fill
     />

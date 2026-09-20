@@ -33,6 +33,16 @@ module.exports = {
           80: "#1F2937",
           90: "#111827",
         },
+        ink: {
+          950: "#0A0A0A",
+          900: "#0E0E10",
+          800: "#16161A",
+        },
+        neon: {
+          DEFAULT: "#5CE1FF",
+          dim: "rgba(92, 225, 255, 0.18)",
+        },
+        glass: "rgba(255, 255, 255, 0.05)",
       },
       borderRadius: {
         none: "0px",
@@ -59,6 +69,7 @@ module.exports = {
       },
       fontFamily: {
         sans: [
+          "var(--font-sora)",
           "Inter",
           "-apple-system",
           "BlinkMacSystemFont",
@@ -68,6 +79,15 @@ module.exports = {
           "Ubuntu",
           "sans-serif",
         ],
+        display: ["var(--font-sora)", "sans-serif"],
+        hud: ["var(--font-hud)", "sans-serif"],
+      },
+      letterSpacing: {
+        hud: "0.15em",
+      },
+      boxShadow: {
+        glow: "0 0 24px rgba(92, 225, 255, 0.35)",
+        "glow-sm": "0 0 12px rgba(92, 225, 255, 0.25)",
       },
       keyframes: {
         ring: {
@@ -139,6 +159,15 @@ module.exports = {
           "0%": { transform: "translateY(-100%)" },
           "100%": { transform: "translateY(0)" },
         },
+        pulseRing: {
+          "0%": { transform: "scale(1)", opacity: "0.7" },
+          "70%": { transform: "scale(2.1)", opacity: "0" },
+          "100%": { transform: "scale(2.1)", opacity: "0" },
+        },
+        floatY: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(8px)" },
+        },
       },
       animation: {
         ring: "ring 2.2s cubic-bezier(0.5, 0, 0.5, 1) infinite",
@@ -154,6 +183,8 @@ module.exports = {
         enter: "enter 200ms ease-out",
         "slide-in": "slide-in 1.2s cubic-bezier(.41,.73,.51,1.02)",
         leave: "leave 150ms ease-in forwards",
+        "pulse-ring": "pulseRing 2s cubic-bezier(0.22, 1, 0.36, 1) infinite",
+        "float-y": "floatY 2.4s ease-in-out infinite",
       },
     },
   },

@@ -38,7 +38,7 @@ const SideMenu = ({ regions, locales, currentLocale }: SideMenuProps) => {
               <div className="relative flex h-full">
                 <Popover.Button
                   data-testid="nav-menu-button"
-                  className="relative h-full flex items-center transition-all ease-out duration-200 focus:outline-none hover:text-ui-fg-base"
+                  className="relative flex h-full items-center transition-all duration-200 ease-out hover:text-neon focus:outline-none"
                 >
                   Menu
                 </Popover.Button>
@@ -127,7 +127,7 @@ const SideMenu = ({ regions, locales, currentLocale }: SideMenuProps) => {
                         />
                       </div>
                       <Text className="flex justify-between txt-compact-small">
-                        © {new Date().getFullYear()} Medusa Store. All rights
+                        © {new Date().getFullYear()} Gato Gang. All rights
                         reserved.
                       </Text>
                     </div>

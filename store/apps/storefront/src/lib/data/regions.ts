@@ -32,28 +32,30 @@ export const retrieveRegion = async (id: string) => {
     .then(({ region }) => region)
 }
 
-const regionMap = new Map<string, HttpTypes.StoreRegion>()
-
+/**
+ * Resolves a store region from a country code without a process-wide stale map.
+ */
 export const getRegion = async (countryCode: string) => {
-  if (regionMap.has(countryCode)) {
-    return regionMap.get(countryCode)
+  if (!countryCode) {
+    return null
   }
 
   const regions = await listRegions()
 
-  if (!regions) {
+  if (!regions?.length) {
     return null
   }
 
+  const regionMap = new Map<string, HttpTypes.StoreRegion>()
+
   regions.forEach((region) => {
-    region.countries?.forEach((c) => {
-      regionMap.set(c?.iso_2 ?? "", region)
+    region.countries?.forEach((country) => {
+      const iso = country?.iso_2
+      if (iso) {
+        regionMap.set(iso, region)
+      }
     })
   })
 
-  const region = countryCode
-    ? regionMap.get(countryCode)
-    : regionMap.get("us")
-
-  return region
+  return regionMap.get(countryCode) ?? null
 }

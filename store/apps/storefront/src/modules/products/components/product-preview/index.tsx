@@ -9,10 +9,12 @@ export default async function ProductPreview({
   product,
   isFeatured,
   region: _region,
+  tone = "light",
 }: {
   product: HttpTypes.StoreProduct
   isFeatured?: boolean
   region: HttpTypes.StoreRegion
+  tone?: "light" | "dark"
 }) {
   // const pricedProduct = await listProducts({
   //   regionId: region.id,
@@ -35,13 +37,19 @@ export default async function ProductPreview({
           images={product.images}
           size="full"
           isFeatured={isFeatured}
+          tone={tone}
         />
         <div className="flex txt-compact-medium mt-4 justify-between">
-          <Text className="text-ui-fg-subtle" data-testid="product-title">
+          <Text
+            className={tone === "dark" ? "text-white/75" : "text-ui-fg-subtle"}
+            data-testid="product-title"
+          >
             {product.title}
           </Text>
           <div className="flex items-center gap-x-2">
-            {cheapestPrice && <PreviewPrice price={cheapestPrice} />}
+            {cheapestPrice && (
+              <PreviewPrice price={cheapestPrice} tone={tone} />
+            )}
           </div>
         </div>
       </div>

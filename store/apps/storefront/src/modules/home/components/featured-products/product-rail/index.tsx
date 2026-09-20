@@ -2,16 +2,20 @@ import { listProducts } from "@lib/data/products"
 import { HttpTypes } from "@medusajs/types"
 import { Text } from "@modules/common/components/ui"
 
-import InteractiveLink from "@modules/common/components/interactive-link"
+import LocalizedClientLink from "@modules/common/components/localized-client-link"
 import ProductPreview from "@modules/products/components/product-preview"
+
+type ProductRailProps = {
+  collection: HttpTypes.StoreCollection
+  region: HttpTypes.StoreRegion
+  tone?: "light" | "dark"
+}
 
 export default async function ProductRail({
   collection,
   region,
-}: {
-  collection: HttpTypes.StoreCollection
-  region: HttpTypes.StoreRegion
-}) {
+  tone = "light",
+}: ProductRailProps) {
   const {
     response: { products: pricedProducts },
   } = await listProducts({
@@ -26,19 +30,41 @@ export default async function ProductRail({
     return null
   }
 
+  const isDark = tone === "dark"
+
   return (
     <div className="content-container py-12 small:py-24">
-      <div className="flex justify-between mb-8">
-        <Text className="txt-xlarge">{collection.title}</Text>
-        <InteractiveLink href={`/collections/${collection.handle}`}>
+      <div className="mb-8 flex justify-between">
+        <Text
+          className={
+            isDark
+              ? "font-display text-3xl font-extrabold text-white"
+              : "txt-xlarge"
+          }
+        >
+          {collection.title}
+        </Text>
+        <LocalizedClientLink
+          href={`/collections/${collection.handle}`}
+          className={
+            isDark
+              ? "editorial-hud text-neon transition hover:shadow-glow-sm"
+              : "text-ui-fg-interactive"
+          }
+        >
           View all
-        </InteractiveLink>
+        </LocalizedClientLink>
       </div>
-      <ul className="grid grid-cols-2 small:grid-cols-3 gap-x-6 gap-y-24 small:gap-y-36">
+      <ul className="grid grid-cols-2 gap-x-6 gap-y-24 small:grid-cols-3 small:gap-y-36">
         {pricedProducts &&
           pricedProducts.map((product) => (
             <li key={product.id}>
-              <ProductPreview product={product} region={region} isFeatured />
+              <ProductPreview
+                product={product}
+                region={region}
+                isFeatured
+                tone={tone}
+              />
             </li>
           ))}
       </ul>
