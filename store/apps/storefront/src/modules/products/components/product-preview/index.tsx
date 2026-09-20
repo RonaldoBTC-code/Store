@@ -29,7 +29,7 @@ export default async function ProductPreview({
       <div data-testid="product-wrapper">
         <Thumbnail
           thumbnail={thumbnail}
-          size="full"
+          size="square"
           isFeatured={isFeatured}
           tone={tone}
           alt={packshot?.alt ?? product.title ?? "Gato Gang dad hat"}

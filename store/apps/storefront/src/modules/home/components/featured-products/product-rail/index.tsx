@@ -14,7 +14,7 @@ type ProductRailProps = {
 export default async function ProductRail({
   collection,
   region,
-  tone = "light",
+  tone = "dark",
 }: ProductRailProps) {
   const {
     response: { products: pricedProducts },

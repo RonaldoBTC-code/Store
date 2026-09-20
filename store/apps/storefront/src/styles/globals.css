@@ -176,6 +176,11 @@
     min-height: calc(100dvh - 4rem);
   }
 
+  .editorial-home img,
+  .editorial-commerce img {
+    background-color: transparent !important;
+  }
+
   .editorial-commerce .text-ui-fg-base,
   .editorial-commerce .text-ui-fg-subtle,
   .editorial-commerce .text-ui-fg-muted,

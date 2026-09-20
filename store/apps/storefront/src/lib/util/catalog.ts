@@ -20,7 +20,9 @@ const TITLE_TO_HANDLE: Record<string, (typeof CANONICAL_HANDLES)[number]> = {
   "cat online": "cat-online",
 }
 
-type CatalogProduct = Pick<HttpTypes.StoreProduct, "id" | "handle" | "title">
+type CatalogProduct = Pick<HttpTypes.StoreProduct, "handle" | "title"> & {
+  id?: string
+}
 
 const normalizeTitle = (title?: string | null) =>
   (title ?? "").trim().toLowerCase().replace(/\s+/g, " ")
@@ -63,7 +65,7 @@ export function sanitizeCatalogProducts<T extends CatalogProduct>(
       }
 
       const canonical = canonicalHandleFor(product)
-      const key = canonical ?? handle ?? product.id
+      const key = canonical ?? handle ?? product.id ?? ""
 
       if (!winners.has(key)) {
         winners.set(key, product)
@@ -74,18 +76,22 @@ export function sanitizeCatalogProducts<T extends CatalogProduct>(
   return products.filter((product) => keep.has(product.id))
 }
 
+const packshotForProduct = (
+  product: Pick<HttpTypes.StoreProduct, "handle" | "title">
+) => getPackshot(product.handle) || getPackshot(canonicalHandleFor(product))
+
 export function resolveProductThumbnail(
-  product: Pick<HttpTypes.StoreProduct, "handle" | "thumbnail" | "images">
+  product: Pick<HttpTypes.StoreProduct, "handle" | "title" | "thumbnail" | "images">
 ) {
-  const packshot = getPackshot(product.handle)
+  const packshot = packshotForProduct(product)
   return packshot?.png || product.thumbnail || product.images?.[0]?.url || null
 }
 
 export function resolveProductGallery(
-  product: Pick<HttpTypes.StoreProduct, "handle" | "images" | "thumbnail">,
+  product: Pick<HttpTypes.StoreProduct, "handle" | "title" | "images" | "thumbnail">,
   images?: HttpTypes.StoreProductImage[] | null
 ): HttpTypes.StoreProductImage[] {
-  const packshot = getPackshot(product.handle)
+  const packshot = packshotForProduct(product)
   if (packshot) {
     return [
       {
