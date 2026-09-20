@@ -3,10 +3,11 @@
 import { motion, useReducedMotion } from "framer-motion"
 import { ChevronDown } from "lucide-react"
 import LocalizedClientLink from "@modules/common/components/localized-client-link"
-import EditorialMedia from "./editorial-media"
+import EditorialVideo from "./editorial-video"
 import FrameCorners from "./frame-corners"
 
-const FALLBACK_IMAGE = "/editorial/hat-hero.png"
+const HERO_VIDEO = "/editorial/scroll/transparente-3-fondo-negro.mp4"
+const HERO_POSTER = "/editorial/scroll/transparente-3-fondo-negro-poster.jpg"
 
 /**
  * Full-viewport editorial hero with typographic reveal and scroll cue.
@@ -29,17 +30,14 @@ const EditorialHero = () => {
     >
       <FrameCorners />
 
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 pt-8">
-        <div className="relative h-[min(78vh,42rem)] w-full max-w-3xl">
-          <EditorialMedia
-            src={FALLBACK_IMAGE}
-            fallback={FALLBACK_IMAGE}
-            alt="Gato Gang dad hat"
-            priority
-            objectFit="contain"
-            sizes="(min-width: 1024px) 55vw, 100vw"
-          />
-        </div>
+      <div className="pointer-events-none absolute inset-0">
+        <EditorialVideo
+          src={HERO_VIDEO}
+          poster={HERO_POSTER}
+          label="Gato Gang dad hat"
+          className="object-cover"
+          active
+        />
       </div>
       <div
         className="pointer-events-none absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/40 to-ink-950/20"

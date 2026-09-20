@@ -21,7 +21,7 @@ const ImageGallery = ({ images }: ImageGalleryProps) => {
           return (
             <div
               key={image.id}
-              className="relative aspect-square w-full overflow-hidden bg-white"
+              className="relative aspect-square w-full overflow-hidden bg-ink-950"
               id={image.id}
             >
               {!!image.url && (

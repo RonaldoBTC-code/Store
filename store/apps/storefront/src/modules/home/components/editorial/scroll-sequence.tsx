@@ -47,8 +47,8 @@ const FRAMES: SequenceFrame[] = [
   },
   {
     kind: "video",
-    src: "/editorial/scroll/transparente.mp4",
-    poster: "/editorial/scroll/transparente-poster.jpg",
+    src: "/editorial/scroll/transparente-2.mp4",
+    poster: "/editorial/scroll/transparente-2-poster.jpg",
     kicker: "02 / Giro — 04",
     title: "Transición",
     copy: "La gorra da la vuelta. Diez segundos de corte.",
@@ -81,7 +81,7 @@ const FRAMES: SequenceFrame[] = [
   },
   ...PACKSHOTS.map((packshot, index) => ({
     kind: "image" as const,
-    src: packshot.jpg,
+    src: packshot.png,
     fallback: packshot.png,
     kicker: `02 / Giro — ${String(index + 8).padStart(2, "0")}`,
     title: packshot.label,
@@ -105,7 +105,7 @@ const SequenceStage = ({
   if (frame.kind === "video") {
     return (
       <div className="absolute inset-0 flex items-center justify-center px-6 small:px-16">
-        <div className="relative aspect-video w-full max-w-4xl overflow-hidden border border-white/15 bg-white">
+        <div className="relative aspect-video w-full max-w-4xl overflow-hidden border border-white/15 bg-ink-950">
           <EditorialVideo
             src={frame.src}
             poster={frame.poster}
