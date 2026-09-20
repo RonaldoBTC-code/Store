@@ -2,12 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { usePathname } from "next/navigation"
-
-const CHAPTERS = [
-  { id: "hero", index: "01", label: "Drop" },
-  { id: "anatomy", index: "02", label: "Anatomía" },
-  { id: "collection", index: "03", label: "Colección" },
-] as const
+import { HOME_CHAPTERS } from "@modules/home/components/editorial/chapters"
 
 const isCountryHome = (pathname: string) => /^\/[a-z]{2}\/?$/.test(pathname)
 
@@ -16,36 +11,39 @@ const isCountryHome = (pathname: string) => /^\/[a-z]{2}\/?$/.test(pathname)
  */
 const ChapterRail = () => {
   const pathname = usePathname()
-  const [activeId, setActiveId] = useState("hero")
+  const [activeId, setActiveId] = useState(HOME_CHAPTERS[0].id)
 
   useEffect(() => {
     if (!isCountryHome(pathname)) {
       return
     }
 
-    const handleObserve = (entries: IntersectionObserverEntry[]) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]
+    const handleScroll = () => {
+      const marker = window.innerHeight * 0.38
+      let current = HOME_CHAPTERS[0].id
 
-      if (visible?.target.id) {
-        setActiveId(visible.target.id)
-      }
+      HOME_CHAPTERS.forEach((chapter) => {
+        const node = document.getElementById(chapter.id)
+        if (!node) {
+          return
+        }
+
+        if (node.getBoundingClientRect().top <= marker) {
+          current = chapter.id
+        }
+      })
+
+      setActiveId(current)
     }
 
-    const observer = new IntersectionObserver(handleObserve, {
-      rootMargin: "0px 0px -45% 0px",
-      threshold: [0.2, 0.45, 0.7],
-    })
+    handleScroll()
+    window.addEventListener("scroll", handleScroll, { passive: true })
+    window.addEventListener("resize", handleScroll)
 
-    CHAPTERS.forEach((chapter) => {
-      const node = document.getElementById(chapter.id)
-      if (node) {
-        observer.observe(node)
-      }
-    })
-
-    return () => observer.disconnect()
+    return () => {
+      window.removeEventListener("scroll", handleScroll)
+      window.removeEventListener("resize", handleScroll)
+    }
   }, [pathname])
 
   if (!isCountryHome(pathname)) {
@@ -62,11 +60,15 @@ const ChapterRail = () => {
       aria-label="Capítulos de la página"
       className="pointer-events-none fixed z-40 right-3 bottom-24 small:bottom-auto small:top-1/2 small:-translate-y-1/2"
     >
-      <ol className="pointer-events-auto flex flex-col gap-3 rounded-full border border-white/10 bg-ink-950/80 px-2 py-3 backdrop-blur-xl small:gap-4 small:px-2 small:py-4">
-        {CHAPTERS.map((chapter) => {
+      <ol className="pointer-events-auto relative flex flex-col gap-2 rounded-full border border-white/10 bg-ink-950/80 px-2 py-3 backdrop-blur-xl small:gap-3 small:px-2 small:py-4">
+        <span
+          className="absolute left-1/2 top-4 bottom-4 hidden w-px -translate-x-1/2 bg-white/15 small:block"
+          aria-hidden="true"
+        />
+        {HOME_CHAPTERS.map((chapter) => {
           const isActive = activeId === chapter.id
           return (
-            <li key={chapter.id}>
+            <li key={chapter.id} className="relative z-10">
               <button
                 type="button"
                 aria-current={isActive ? "true" : undefined}
@@ -78,7 +80,7 @@ const ChapterRail = () => {
                     handleJump(chapter.id)
                   }
                 }}
-                className={`editorial-hud flex items-center gap-1 rounded-full px-2 py-1 transition small:w-10 small:flex-col ${
+                className={`editorial-hud group relative flex items-center gap-1 rounded-full px-2 py-1 transition small:w-10 small:flex-col ${
                   isActive
                     ? "text-neon shadow-glow-sm"
                     : "text-white/45 hover:text-white"
@@ -86,9 +88,12 @@ const ChapterRail = () => {
               >
                 <span>{chapter.index}</span>
                 <span
-                  className={`hidden h-6 w-px small:block ${isActive ? "bg-neon" : "bg-white/20"}`}
+                  className={`hidden h-5 w-px small:block ${isActive ? "bg-neon" : "bg-transparent"}`}
                   aria-hidden="true"
                 />
+                <span className="pointer-events-none absolute right-full top-1/2 mr-3 hidden -translate-y-1/2 whitespace-nowrap text-white/70 small:group-hover:block">
+                  {chapter.label}
+                </span>
               </button>
             </li>
           )

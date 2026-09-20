@@ -10,6 +10,7 @@ type ThumbnailProps = {
   size?: "small" | "medium" | "large" | "full" | "square"
   isFeatured?: boolean
   tone?: "light" | "dark"
+  alt?: string
   className?: string
   "data-testid"?: string
 }
@@ -20,6 +21,7 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
   size = "small",
   isFeatured,
   tone = "light",
+  alt = "Gato Gang dad hat",
   className,
   "data-testid": dataTestid,
 }) => {
@@ -46,7 +48,7 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
       )}
       data-testid={dataTestid}
     >
-      <ImageOrPlaceholder image={initialImage} size={size} />
+      <ImageOrPlaceholder image={initialImage} size={size} alt={alt} />
     </div>
   )
 }
@@ -54,11 +56,12 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
 const ImageOrPlaceholder = ({
   image,
   size,
-}: Pick<ThumbnailProps, "size"> & { image?: string }) => {
+  alt,
+}: Pick<ThumbnailProps, "size" | "alt"> & { image?: string }) => {
   return image ? (
     <Image
       src={image}
-      alt="Thumbnail"
+      alt={alt || "Gato Gang dad hat"}
       className="absolute inset-0 object-contain object-center p-3"
       draggable={false}
       quality={90}

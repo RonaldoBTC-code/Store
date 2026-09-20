@@ -4,6 +4,7 @@ import { HttpTypes } from "@medusajs/types"
 import LocalizedClientLink from "@modules/common/components/localized-client-link"
 import Thumbnail from "../thumbnail"
 import PreviewPrice from "./price"
+import { getPackshot } from "@modules/home/components/editorial/packshots"
 
 export default async function ProductPreview({
   product,
@@ -28,16 +29,25 @@ export default async function ProductPreview({
   const { cheapestPrice } = getProductPrice({
     product,
   })
+  const packshot = getPackshot(product.handle)
+  const thumbnail = product.thumbnail || packshot?.png
+  const images =
+    product.images && product.images.length > 0
+      ? product.images
+      : packshot
+        ? [{ url: packshot.png }]
+        : product.images
 
   return (
     <LocalizedClientLink href={`/products/${product.handle}`} className="group">
       <div data-testid="product-wrapper">
         <Thumbnail
-          thumbnail={product.thumbnail}
-          images={product.images}
+          thumbnail={thumbnail}
+          images={images}
           size="full"
           isFeatured={isFeatured}
           tone={tone}
+          alt={packshot?.alt ?? product.title ?? "Gato Gang dad hat"}
         />
         <div className="flex txt-compact-medium mt-4 justify-between">
           <Text

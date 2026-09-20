@@ -215,7 +215,7 @@ const HatAnatomy = () => {
             })}
           </div>
           <p className="editorial-hud absolute bottom-6 left-6 text-white/40">
-            02 / Hotspots
+            03 / Hotspots
           </p>
         </div>
 
