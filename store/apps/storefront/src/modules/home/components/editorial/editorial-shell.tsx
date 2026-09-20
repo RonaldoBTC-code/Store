@@ -11,7 +11,7 @@ const EditorialShell = ({ children }: EditorialShellProps) => {
   return (
     <div className="editorial-grain relative bg-ink-950 text-white">
       <div className="relative z-10">{children}</div>
-      <div className="editorial-vignette pointer-events-none absolute inset-0 z-[16]" />
+      <div className="editorial-vignette pointer-events-none fixed inset-0 z-[16]" />
     </div>
   )
 }
