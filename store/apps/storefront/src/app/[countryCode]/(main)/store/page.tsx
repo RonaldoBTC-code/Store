@@ -1,6 +1,5 @@
 import { Metadata } from "next"
 
-import { parseOptionValueIds } from "@lib/util/product-option-filters"
 import { SortOptions } from "@modules/store/components/refinement-list/sort-products"
 import StoreTemplate from "@modules/store/templates"
 import { COLLECTION_SEO, metadataFromCopy } from "@lib/seo/copy"
@@ -10,7 +9,6 @@ export const metadata: Metadata = metadataFromCopy(COLLECTION_SEO)
 type StorePageSearchParams = Record<string, string | string[] | undefined> & {
   sortBy?: SortOptions
   page?: string
-  optionValueIds?: string | string[]
 }
 
 type Params = {
@@ -21,17 +19,15 @@ type Params = {
 }
 
 export default async function StorePage(props: Params) {
-  const params = await props.params;
-  const searchParams = await props.searchParams;
+  const params = await props.params
+  const searchParams = await props.searchParams
   const { sortBy, page } = searchParams
-  const optionValueIds = parseOptionValueIds(searchParams)
 
   return (
     <StoreTemplate
       sortBy={sortBy}
       page={page}
       countryCode={params.countryCode}
-      optionValueIds={optionValueIds}
     />
   )
 }

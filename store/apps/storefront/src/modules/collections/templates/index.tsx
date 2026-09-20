@@ -6,20 +6,17 @@ import { SortOptions } from "@modules/store/components/refinement-list/sort-prod
 import PaginatedProducts from "@modules/store/templates/paginated-products"
 import { HttpTypes } from "@medusajs/types"
 import { COLLECTION_SEO, isCollectionSeoHandle } from "@lib/seo/copy"
-import { OptionValueIds } from "@lib/util/product-option-filters"
 
 export default function CollectionTemplate({
   sortBy,
   collection,
   page,
   countryCode,
-  optionValueIds,
 }: {
   sortBy?: SortOptions
   collection: HttpTypes.StoreCollection
   page?: string
   countryCode: string
-  optionValueIds?: OptionValueIds
 }) {
   const pageNumber = page ? parseInt(page) : 1
   const sort = sortBy || "created_at"
@@ -27,18 +24,19 @@ export default function CollectionTemplate({
 
   return (
     <div className="editorial-commerce bg-ink-950 text-white">
-      <div className="content-container flex flex-col py-10 small:flex-row small:items-start small:py-16">
-      <RefinementList sortBy={sort} hideOptionsPicker />
-      <div className="w-full">
-        <div className="mb-8">
-          <h1 className="font-display text-4xl font-extrabold tracking-tight text-white small:text-6xl">
-            {seo?.h1 ?? collection.title}
-          </h1>
-          {seo?.intro && (
-            <p className="mt-3 max-w-2xl text-base-regular font-normal text-white/65">
-              {seo.intro}
-            </p>
-          )}
+      <div className="content-container py-10 small:py-16">
+        <div className="mb-10 flex flex-col gap-6 small:flex-row small:items-end small:justify-between">
+          <div>
+            <h1 className="font-display text-4xl font-extrabold tracking-tight text-white small:text-6xl">
+              {seo?.h1 ?? collection.title}
+            </h1>
+            {seo?.intro && (
+              <p className="mt-3 max-w-2xl text-base-regular font-normal text-white/80">
+                {seo.intro}
+              </p>
+            )}
+          </div>
+          <RefinementList sortBy={sort} />
         </div>
         <Suspense
           fallback={
@@ -52,10 +50,8 @@ export default function CollectionTemplate({
             page={pageNumber}
             collectionId={collection.id}
             countryCode={countryCode}
-            optionValueIds={optionValueIds}
           />
         </Suspense>
-      </div>
       </div>
     </div>
   )
