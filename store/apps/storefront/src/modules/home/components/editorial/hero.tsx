@@ -4,6 +4,7 @@ import { motion, useReducedMotion } from "framer-motion"
 import { ChevronDown } from "lucide-react"
 import LocalizedClientLink from "@modules/common/components/localized-client-link"
 import EditorialMedia from "./editorial-media"
+import FrameCorners from "./frame-corners"
 
 const FALLBACK_IMAGE = "/editorial/hat-hero.png"
 
@@ -14,8 +15,8 @@ const EditorialHero = () => {
   const prefersReducedMotion = useReducedMotion()
   const delay = prefersReducedMotion ? 0 : 0.18
 
-  const handleScrollToAnatomy = () => {
-    document.getElementById("anatomy")?.scrollIntoView({
+  const handleScrollToGiro = () => {
+    document.getElementById("giro")?.scrollIntoView({
       behavior: prefersReducedMotion ? "auto" : "smooth",
       block: "start",
     })
@@ -26,7 +27,9 @@ const EditorialHero = () => {
       id="hero"
       className="relative isolate flex min-h-[calc(100dvh-4rem)] w-full items-end overflow-hidden bg-ink-950"
     >
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 pt-8 small:justify-end small:px-16">
+      <FrameCorners />
+
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6 pt-8">
         <div className="relative h-[min(78vh,42rem)] w-full max-w-3xl">
           <EditorialMedia
             src={FALLBACK_IMAGE}
@@ -39,9 +42,16 @@ const EditorialHero = () => {
         </div>
       </div>
       <div
-        className="absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/35 to-transparent"
+        className="absolute inset-0 bg-gradient-to-t from-ink-950 via-ink-950/40 to-ink-950/20"
         aria-hidden="true"
       />
+
+      <div className="absolute left-6 top-6 z-10 small:left-10 small:top-8">
+        <p className="editorial-hud text-white/45">Gato Gang</p>
+      </div>
+      <p className="editorial-hud absolute right-6 top-6 z-10 text-white/45 small:right-10 small:top-8">
+        01 / 05
+      </p>
 
       <div className="relative z-10 flex w-full flex-col gap-8 px-6 pb-24 pt-28 small:px-12 small:pb-20">
         <motion.p
@@ -84,10 +94,10 @@ const EditorialHero = () => {
         >
           <button
             type="button"
-            onClick={handleScrollToAnatomy}
+            onClick={handleScrollToGiro}
             className="editorial-hud rounded-full border border-neon/60 bg-neon/10 px-6 py-3 text-neon shadow-glow-sm transition hover:bg-neon hover:text-ink-950 hover:shadow-glow"
           >
-            02 Anatomía
+            02 Giro
           </button>
           <LocalizedClientLink
             href="/store"
@@ -100,9 +110,9 @@ const EditorialHero = () => {
 
       <button
         type="button"
-        onClick={handleScrollToAnatomy}
+        onClick={handleScrollToGiro}
         className="absolute bottom-24 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-2 text-white/70 transition hover:text-neon small:bottom-8"
-        aria-label="Desplazar a anatomía de la gorra"
+        aria-label="Desplazar al giro de la gorra"
       >
         <span className="editorial-hud">Scroll</span>
         <ChevronDown
