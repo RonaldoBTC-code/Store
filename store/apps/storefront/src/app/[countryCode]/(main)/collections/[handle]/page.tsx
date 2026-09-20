@@ -6,7 +6,6 @@ import { listRegions } from "@lib/data/regions"
 import { StoreCollection, StoreRegion } from "@medusajs/types"
 import CollectionTemplate from "@modules/collections/templates"
 import { SortOptions } from "@modules/store/components/refinement-list/sort-products"
-import { parseOptionValueIds } from "@lib/util/product-option-filters"
 import {
   COLLECTION_SEO,
   isCollectionSeoHandle,
@@ -19,7 +18,6 @@ type Props = {
     Record<string, string | string[] | undefined> & {
       page?: string
       sortBy?: SortOptions
-      optionValueIds?: string | string[]
     }
   >
 }
@@ -81,7 +79,6 @@ export default async function CollectionPage(props: Props) {
   const searchParams = await props.searchParams
   const params = await props.params
   const { sortBy, page } = searchParams
-  const optionValueIds = parseOptionValueIds(searchParams)
 
   const collection = await getCollectionByHandle(params.handle).then(
     (collection) => collection
@@ -97,7 +94,6 @@ export default async function CollectionPage(props: Props) {
       page={page}
       sortBy={sortBy}
       countryCode={params.countryCode}
-      optionValueIds={optionValueIds}
     />
   )
 }

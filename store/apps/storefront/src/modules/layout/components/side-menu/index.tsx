@@ -1,27 +1,21 @@
 "use client"
 
-import {
-  Popover,
-  PopoverButton,
-  PopoverPanel,
-  Transition,
-} from "@headlessui/react"
+import { Popover, PopoverPanel, Transition } from "@headlessui/react"
 import useToggleState from "@lib/hooks/use-toggle-state"
-import { ArrowRightMini, XMark } from "@medusajs/icons"
+import { XMark } from "@medusajs/icons"
 import { HttpTypes } from "@medusajs/types"
 import LocalizedClientLink from "@modules/common/components/localized-client-link"
-import { Text, clx } from "@modules/common/components/ui"
+import { Text } from "@modules/common/components/ui"
 import { Fragment } from "react"
 import CountrySelect from "../country-select"
-import LanguageSelect from "../language-select"
 import { Locale } from "@lib/data/locales"
 
 const SideMenuItems = {
-  Home: "/",
-  Store: "/store",
-  Account: "/account",
-  Cart: "/cart",
-}
+  HOME: "/",
+  STORE: "/store",
+  ACCOUNT: "/account",
+  CART: "/cart",
+} as const
 
 type SideMenuProps = {
   regions: HttpTypes.StoreRegion[] | null
@@ -29,108 +23,90 @@ type SideMenuProps = {
   currentLocale: string | null
 }
 
-const SideMenu = ({ regions, locales, currentLocale }: SideMenuProps) => {
+const SideMenu = ({ regions }: SideMenuProps) => {
   const countryToggleState = useToggleState()
-  const languageToggleState = useToggleState()
 
   return (
     <div className="h-full">
-      <div className="flex items-center h-full">
-        <Popover className="h-full flex">
-          {({ close }) => (
+      <div className="flex h-full items-center">
+        <Popover className="flex h-full">
+          {({ open, close }) => (
             <>
               <div className="relative flex h-full">
-                <PopoverButton
+                <Popover.Button
                   data-testid="nav-menu-button"
-                  className="relative z-[52] flex h-full items-center transition-all duration-200 ease-out hover:text-neon focus:outline-none"
+                  className="relative flex h-full items-center text-white transition-colors duration-200 ease-out hover:text-neon focus:outline-none"
                 >
                   Menu
-                </PopoverButton>
+                </Popover.Button>
               </div>
 
               <Transition
+                show={open}
                 as={Fragment}
-                enter="transition ease-out duration-150"
+                enter="transition ease-out duration-200"
                 enterFrom="opacity-0"
                 enterTo="opacity-100"
                 leave="transition ease-in duration-150"
                 leaveFrom="opacity-100"
                 leaveTo="opacity-0"
               >
-                <PopoverPanel className="absolute inset-x-0 z-[51] m-2 flex h-[calc(100vh-1rem)] w-full flex-col pr-4 text-sm text-ui-fg-on-color sm:w-1/3 sm:min-w-min sm:pr-0 2xl:w-1/4">
+                <PopoverPanel
+                  className="fixed inset-0 z-[80] h-dvh w-screen bg-ink-950 text-white"
+                  data-testid="nav-menu-popup"
+                >
                   <div
-                    className="fixed inset-0 z-[50] bg-black/40"
-                    onClick={close}
+                    className="pointer-events-none absolute inset-0 bg-ink-950"
                     data-testid="side-menu-backdrop"
                   />
-                  <div
-                    data-testid="nav-menu-popup"
-                    className="relative z-[51] flex h-full flex-col justify-between rounded-rounded bg-[rgba(3,7,18,0.92)] p-6 backdrop-blur-2xl"
-                  >
-                    <div className="flex justify-end" id="xmark">
+                  <div className="relative z-10 flex h-full flex-col px-6 py-6 small:px-12">
+                    <div className="flex items-center justify-between">
+                      <p className="editorial-hud text-neon">Menu</p>
                       <button
                         type="button"
                         data-testid="close-menu-button"
                         onClick={close}
+                        className="text-white transition-colors hover:text-neon"
+                        aria-label="Close menu"
                       >
                         <XMark />
                       </button>
                     </div>
-                    <ul className="flex flex-col items-start justify-start gap-6">
-                      {Object.entries(SideMenuItems).map(([name, href]) => {
-                        return (
+
+                    <nav
+                      aria-label="Primary"
+                      className="flex flex-1 flex-col justify-center"
+                    >
+                      <ul className="flex flex-col gap-4 small:gap-6">
+                        {Object.entries(SideMenuItems).map(([name, href]) => (
                           <li key={name}>
                             <LocalizedClientLink
                               href={href}
-                              className="text-3xl leading-10 hover:text-ui-fg-disabled"
+                              className="font-display text-5xl font-extrabold uppercase leading-none tracking-tight text-white transition-colors hover:text-neon small:text-7xl"
                               onClick={close}
                               data-testid={`${name.toLowerCase()}-link`}
                             >
                               {name}
                             </LocalizedClientLink>
                           </li>
-                        )
-                      })}
-                    </ul>
-                    <div className="flex flex-col gap-y-6">
-                      {!!locales?.length && (
+                        ))}
+                      </ul>
+                    </nav>
+
+                    <div className="flex flex-col gap-4 border-t border-white/15 pt-6 text-white">
+                      {regions && (
                         <div
-                          className="flex justify-between"
-                          onMouseEnter={languageToggleState.open}
-                          onMouseLeave={languageToggleState.close}
+                          className="text-white"
+                          onMouseEnter={countryToggleState.open}
+                          onMouseLeave={countryToggleState.close}
                         >
-                          <LanguageSelect
-                            toggleState={languageToggleState}
-                            locales={locales}
-                            currentLocale={currentLocale}
-                          />
-                          <ArrowRightMini
-                            className={clx(
-                              "transition-transform duration-150",
-                              languageToggleState.state ? "-rotate-90" : ""
-                            )}
-                          />
-                        </div>
-                      )}
-                      <div
-                        className="flex justify-between"
-                        onMouseEnter={countryToggleState.open}
-                        onMouseLeave={countryToggleState.close}
-                      >
-                        {regions && (
                           <CountrySelect
                             toggleState={countryToggleState}
                             regions={regions}
                           />
-                        )}
-                        <ArrowRightMini
-                          className={clx(
-                            "transition-transform duration-150",
-                            countryToggleState.state ? "-rotate-90" : ""
-                          )}
-                        />
-                      </div>
-                      <Text className="flex justify-between txt-compact-small">
+                        </div>
+                      )}
+                      <Text className="txt-compact-small text-white/80">
                         © {new Date().getFullYear()} Gato Gang. All rights
                         reserved.
                       </Text>
