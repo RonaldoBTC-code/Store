@@ -119,14 +119,16 @@ const SequenceStage = ({
   }
 
   return (
-    <EditorialMedia
-      src={frame.src}
-      fallback={frame.fallback || frame.src}
-      alt={frame.alt}
-      objectFit="contain"
-      sizes="100vw"
-      priority={priority}
-    />
+    <div className="absolute inset-0 bg-ink-950">
+      <EditorialMedia
+        src={frame.src}
+        fallback={frame.fallback || frame.src}
+        alt={frame.alt}
+        objectFit="contain"
+        sizes="100vw"
+        priority={priority}
+      />
+    </div>
   )
 }
 
@@ -189,7 +191,7 @@ const ScrollSequence = () => {
               key={`${item.kind}-${item.src}`}
               className="grid border-t border-white/10 small:grid-cols-2"
             >
-              <div className="relative min-h-[70vh] bg-ink-950">
+              <div className="relative min-h-[70vh] overflow-hidden bg-ink-950">
                 {item.kind === "video" ? (
                   <EditorialVideo
                     src={item.src}
