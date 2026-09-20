@@ -5,10 +5,14 @@ import { motion, useReducedMotion } from "framer-motion"
 import gsap from "gsap"
 import { ScrollTrigger } from "gsap/ScrollTrigger"
 import EditorialMedia from "./editorial-media"
+import EditorialVideo from "./editorial-video"
 import FrameCorners from "./frame-corners"
+import { PACKSHOTS } from "./packshots"
 
 type SequenceFrame = {
+  kind: "image" | "video"
   src: string
+  poster?: string
   kicker: string
   title: string
   copy: string
@@ -17,60 +21,117 @@ type SequenceFrame = {
 
 const FRAMES: SequenceFrame[] = [
   {
+    kind: "image",
     src: "/editorial/scroll/01.png",
     kicker: "02 / Giro — 01",
     title: "Perfil",
     copy: "Visera curva. Sombra baja. El lado que se ve cuando cruzas la calle.",
-    alt: "Dad hat Gato Gang de perfil",
+    alt: "Fish Hug dad hat negra parche bordado Gato Gang",
   },
   {
-    src: "/editorial/scroll/04.png",
+    kind: "image",
+    src: "/editorial/scroll/02.png",
     kicker: "02 / Giro — 02",
-    title: "Corona",
-    copy: "Seis paneles, caída unstructured. La gorra no pide permiso: se sienta.",
-    alt: "Corona de la dad hat Gato Gang vista desde arriba",
+    title: "Frente",
+    copy: "El parche se lee de lejos. Mic muteado, mirada puesta.",
+    alt: "Cat Online dad hat negra parche bordado Gato Gang",
   },
   {
-    src: "/editorial/scroll/03-close.png",
+    kind: "image",
+    src: "/editorial/scroll/03.png",
     kicker: "02 / Giro — 03",
+    title: "Tres cuartos",
+    copy: "Misma silueta, otro ángulo. Street, suave, un poco pícara.",
+    alt: "Cat Online dad hat negra parche bordado Gato Gang",
+  },
+  {
+    kind: "video",
+    src: "/editorial/scroll/transparente.mp4",
+    poster: "/editorial/scroll/03.png",
+    kicker: "02 / Giro — 04",
+    title: "Transición",
+    copy: "La gorra da la vuelta. Diez segundos de corte.",
+    alt: "Cat Online dad hat negra parche bordado Gato Gang",
+  },
+  {
+    kind: "image",
+    src: "/editorial/scroll/03-close.png",
+    kicker: "02 / Giro — 05",
     title: "Relieve",
     copy: "El parche no es un print. Es un objeto sobre negro.",
-    alt: "Parche bordado en relieve sobre dad hat negra",
+    alt: "Cat Online dad hat negra parche bordado Gato Gang",
   },
   {
-    src: "/editorial/product/fish-hug.png",
-    kicker: "02 / Giro — 04",
-    title: "Fish Hug",
-    copy: "El gato y el pez. El chiste interno de la crew.",
-    alt: "Gorra Fish Hug Gato Gang",
-  },
-  {
-    src: "/editorial/product/lo-fi-cat.png",
-    kicker: "02 / Giro — 05",
-    title: "Lo-Fi Cat",
-    copy: "Soundtrack propio. Audífonos puestos, calle apagada.",
-    alt: "Gorra Lo-Fi Cat Gato Gang",
-  },
-  {
-    src: "/editorial/product/busy-dog.png",
+    kind: "image",
+    src: "/editorial/scroll/04.png",
     kicker: "02 / Giro — 06",
-    title: "Busy Dog",
-    copy: "Humor de squad, no disfraz. El perro también es de la casa.",
-    alt: "Gorra Busy Dog Gato Gang",
+    title: "Corona",
+    copy: "Seis paneles, caída unstructured. La gorra no pide permiso: se sienta.",
+    alt: "Cat Online dad hat negra parche bordado Gato Gang",
   },
   {
-    src: "/editorial/product/cat-online.png",
+    kind: "video",
+    src: "/editorial/scroll/transparente-2.mp4",
+    poster: "/editorial/scroll/02.png",
     kicker: "02 / Giro — 07",
-    title: "Cat Online",
-    copy: "En llamada, mic muteado. Companion visual de Lo-Fi Cat.",
-    alt: "Gorra Cat Online Gato Gang",
+    title: "Studio",
+    copy: "Otra toma. Misma silueta, otra luz.",
+    alt: "Cat Online dad hat negra parche bordado Gato Gang",
   },
+  ...PACKSHOTS.map((packshot, index) => ({
+    kind: "image" as const,
+    src: packshot.png,
+    kicker: `02 / Giro — ${String(index + 8).padStart(2, "0")}`,
+    title: packshot.label,
+    copy: "Dad hat negra, parche bordado, talla única.",
+    alt: packshot.alt,
+  })),
 ]
 
-const FRAME_VH = 85
+const FRAME_VH = 80
+
+const SequenceStage = ({
+  frame,
+  active,
+  priority,
+}: {
+  frame: SequenceFrame
+  active: boolean
+  priority?: boolean
+}) => {
+  if (frame.kind === "video") {
+    if (!active) {
+      return null
+    }
+
+    return (
+      <div className="absolute inset-0 flex items-center justify-center px-6 small:px-16">
+        <div className="relative aspect-video w-full max-w-4xl overflow-hidden border border-white/15 bg-ink-900">
+          <EditorialVideo
+            src={frame.src}
+            poster={frame.poster}
+            label={frame.alt}
+            className="object-cover"
+          />
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <EditorialMedia
+      src={frame.src}
+      fallback={frame.src}
+      alt={frame.alt}
+      objectFit="contain"
+      sizes="100vw"
+      priority={priority}
+    />
+  )
+}
 
 /**
- * Pinned chapter: media advances in sequence as the user scrolls.
+ * Pinned chapter: stills and loop videos advance in sequence as the user scrolls.
  */
 const ScrollSequence = () => {
   const prefersReducedMotion = useReducedMotion()
@@ -123,17 +184,26 @@ const ScrollSequence = () => {
         <div className="flex flex-col">
           {FRAMES.map((item) => (
             <article
-              key={item.src}
+              key={`${item.kind}-${item.src}`}
               className="grid border-t border-white/10 small:grid-cols-2"
             >
               <div className="relative min-h-[70vh] bg-ink-950">
-                <EditorialMedia
-                  src={item.src}
-                  fallback={item.src}
-                  alt={item.alt}
-                  objectFit="contain"
-                  sizes="(min-width: 1024px) 50vw, 100vw"
-                />
+                {item.kind === "video" ? (
+                  <EditorialVideo
+                    src={item.src}
+                    poster={item.poster}
+                    label={item.alt}
+                    className="object-cover"
+                  />
+                ) : (
+                  <EditorialMedia
+                    src={item.src}
+                    fallback={item.src}
+                    alt={item.alt}
+                    objectFit="contain"
+                    sizes="(min-width: 1024px) 50vw, 100vw"
+                  />
+                )}
               </div>
               <div className="flex flex-col justify-center px-6 py-12 small:px-12">
                 <p className="editorial-hud text-neon">{item.kicker}</p>
@@ -159,17 +229,14 @@ const ScrollSequence = () => {
       <div className="sticky top-16 h-[calc(100dvh-4rem)] overflow-hidden">
         {FRAMES.map((item, index) => (
           <div
-            key={item.src}
+            key={`${item.kind}-${item.src}`}
             className="absolute inset-0 transition-opacity duration-300"
             style={{ opacity: index === active ? 1 : 0 }}
             aria-hidden={index !== active}
           >
-            <EditorialMedia
-              src={item.src}
-              fallback={item.src}
-              alt={item.alt}
-              objectFit="contain"
-              sizes="100vw"
+            <SequenceStage
+              frame={item}
+              active={index === active}
               priority={index < 2}
             />
           </div>

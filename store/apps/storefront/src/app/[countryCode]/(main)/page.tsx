@@ -5,6 +5,7 @@ import EditorialShell from "@modules/home/components/editorial/editorial-shell"
 import EditorialHero from "@modules/home/components/editorial/hero"
 import FilmChapter from "@modules/home/components/editorial/film-chapter"
 import HatAnatomy from "@modules/home/components/editorial/hat-anatomy"
+import PackshotGallery from "@modules/home/components/editorial/packshot-gallery"
 import ScrollSequence from "@modules/home/components/editorial/scroll-sequence"
 import { listCollections } from "@lib/data/collections"
 import { getRegion } from "@lib/data/regions"
@@ -47,6 +48,7 @@ export default async function Home(props: {
             El drop completo
           </h2>
         </div>
+        <PackshotGallery />
         <ul className="flex flex-col">
           <FeaturedProducts
             collections={collections}
