@@ -7,9 +7,12 @@ import {
 } from "@medusajs/framework/utils"
 import {
   createCollectionsWorkflow,
+  createInventoryItemsWorkflow,
   createInventoryLevelsWorkflow,
   createProductCategoriesWorkflow,
+  createProductVariantsWorkflow,
   createProductsWorkflow,
+  updateProductVariantsWorkflow,
   updateProductsWorkflow,
 } from "@medusajs/medusa/core-flows"
 import {
@@ -21,6 +24,7 @@ import {
   listMissingCapSeedFields,
   type CapSeed,
 } from "../data/cap-products"
+import { assertSeedAllowed } from "./assert-seed-allowed"
 
 const ECUADOR_LOCATION_NAME = "Ecuador"
 
@@ -32,12 +36,21 @@ type ProductRecord = {
   collection?: IdRecord | null
   categories?: IdRecord[] | null
   sales_channels?: IdRecord[] | null
-  variants?: {
-    id: string
-    sku?: string | null
-    inventory_items?: { inventory_item_id?: string | null }[] | null
-  }[] | null
 }
+
+type VariantRecord = {
+  id: string
+  sku?: string | null
+  manage_inventory?: boolean | null
+  allow_backorder?: boolean | null
+  inventory_items?: { inventory_item_id?: string | null }[] | null
+}
+
+type Query = { graph: Function }
+
+type Logger = { info: (message: string) => void }
+
+type Link = { create: (data: object) => Promise<unknown> }
 
 type InventoryLevelRecord = {
   id: string
@@ -47,9 +60,15 @@ type InventoryLevelRecord = {
 
 /**
  * Creates the four Gato Gang caps from `src/data/cap-products.ts`.
- * Refuses to run while sku, price, or stock are still TODO.
+ * Looks up products by handle and variants by sku before creating.
+ * Each cap variant tracks inventory at the Ecuador stock location.
+ * Stock quantities come only from the data file and are not overwritten
+ * when a level already exists. Refuses to run while sku, price, or stock
+ * are still TODO, and refuses production unless ALLOW_PROD_SEED=true.
  */
 export default async function seedCapProducts({ container }: ExecArgs) {
+  assertSeedAllowed()
+
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
   const missing = listMissingCapSeedFields()
 
@@ -121,9 +140,6 @@ export default async function seedCapProducts({ container }: ExecArgs) {
       "collection.id",
       "categories.id",
       "sales_channels.id",
-      "variants.id",
-      "variants.sku",
-      "variants.inventory_items.inventory_item_id",
     ],
   })
   const existingProducts = (products ?? []) as ProductRecord[]
@@ -133,6 +149,7 @@ export default async function seedCapProducts({ container }: ExecArgs) {
     if (existing) {
       await ensureExistingProduct(
         container,
+        query,
         link,
         logger,
         existing,
@@ -148,6 +165,23 @@ export default async function seedCapProducts({ container }: ExecArgs) {
     const priceUsd = cap.priceUsd as number
     const stockedQuantity = cap.stockedQuantity as number
     const sku = cap.sku as string
+    const existingVariant = await findVariantBySku(query, sku)
+
+    if (existingVariant) {
+      logger.info(
+        `Variant sku ${sku} already exists. Skipping a second ${cap.handle} product.`
+      )
+      await ensureTrackedVariant(
+        container,
+        query,
+        link,
+        logger,
+        existingVariant,
+        cap,
+        location.id
+      )
+      continue
+    }
 
     await createProductsWorkflow(container).run({
       input: {
@@ -206,8 +240,8 @@ export default async function seedCapProducts({ container }: ExecArgs) {
 
 async function ensureCollection(
   container: ExecArgs["container"],
-  query: { graph: Function },
-  logger: { info: (message: string) => void }
+  query: Query,
+  logger: Logger
 ) {
   const { data } = await query.graph({
     entity: "product_collection",
@@ -238,8 +272,8 @@ async function ensureCollection(
 
 async function ensureCategory(
   container: ExecArgs["container"],
-  query: { graph: Function },
-  logger: { info: (message: string) => void }
+  query: Query,
+  logger: Logger
 ) {
   const { data } = await query.graph({
     entity: "product_category",
@@ -272,8 +306,9 @@ async function ensureCategory(
 
 async function ensureExistingProduct(
   container: ExecArgs["container"],
-  link: { create: (data: object) => Promise<unknown> },
-  logger: { info: (message: string) => void },
+  query: Query,
+  link: Link,
+  logger: Logger,
   product: ProductRecord,
   cap: CapSeed,
   collectionId: string,
@@ -324,21 +359,103 @@ async function ensureExistingProduct(
   }
 
   const sku = cap.sku as string
-  const variant = product.variants?.find((entry) => entry.sku === sku)
-  const inventoryItemId =
-    variant?.inventory_items?.find((item) => item.inventory_item_id)
-      ?.inventory_item_id ?? null
+  const variant = await findVariantBySku(query, sku)
 
-  if (!inventoryItemId) {
-    logger.info(
-      `No inventory item for ${cap.handle} sku ${sku}. Stock was not changed.`
+  if (!variant) {
+    const priceUsd = cap.priceUsd as number
+    await createProductVariantsWorkflow(container).run({
+      input: {
+        product_variants: [
+          {
+            product_id: product.id,
+            title: `${cap.talla} / ${cap.color}`,
+            sku,
+            manage_inventory: true,
+            allow_backorder: false,
+            options: {
+              [CAP_OPTION_TALLA]: cap.talla,
+              [CAP_OPTION_COLOR]: cap.color,
+            },
+            prices: [
+              {
+                amount: priceUsd,
+                currency_code: "usd",
+              },
+            ],
+          },
+        ],
+      },
+    })
+    logger.info(`Created variant ${sku} on ${cap.handle}.`)
+    const created = await findVariantBySku(query, sku)
+    if (!created) {
+      throw new MedusaError(
+        MedusaError.Types.UNEXPECTED_STATE,
+        `Variant ${sku} was not created for ${cap.handle}.`
+      )
+    }
+    await ensureTrackedVariant(
+      container,
+      query,
+      link,
+      logger,
+      created,
+      cap,
+      locationId
     )
     return
   }
 
+  await ensureTrackedVariant(
+    container,
+    query,
+    link,
+    logger,
+    variant,
+    cap,
+    locationId
+  )
+}
+
+async function ensureTrackedVariant(
+  container: ExecArgs["container"],
+  query: Query,
+  link: Link,
+  logger: Logger,
+  variant: VariantRecord,
+  cap: CapSeed,
+  locationId: string
+) {
+  const sku = cap.sku as string
+
+  if (variant.manage_inventory !== true || variant.allow_backorder) {
+    await updateProductVariantsWorkflow(container).run({
+      input: {
+        product_variants: [
+          {
+            id: variant.id,
+            manage_inventory: true,
+            allow_backorder: false,
+          },
+        ],
+      },
+    })
+    logger.info(`Enabled inventory tracking for ${cap.handle} (${sku}).`)
+  }
+
+  const inventoryItemId = await ensureInventoryItem(
+    container,
+    query,
+    link,
+    logger,
+    variant,
+    sku,
+    cap
+  )
+
   await ensureInventoryLevel(
     container,
-    container.resolve(ContainerRegistrationKeys.QUERY),
+    query,
     logger,
     inventoryItemId,
     locationId,
@@ -347,20 +464,83 @@ async function ensureExistingProduct(
   )
 }
 
-async function findInventoryItemId(
-  query: { graph: Function },
-  sku: string
+async function ensureInventoryItem(
+  container: ExecArgs["container"],
+  query: Query,
+  link: Link,
+  logger: Logger,
+  variant: VariantRecord,
+  sku: string,
+  cap: CapSeed
 ) {
-  const { data: variants } = await query.graph({
+  let inventoryItemId =
+    variant.inventory_items?.find((item) => item.inventory_item_id)
+      ?.inventory_item_id ?? null
+
+  if (!inventoryItemId) {
+    inventoryItemId = (await findInventoryItemIdBySku(query, sku)) ?? null
+  }
+
+  if (!inventoryItemId) {
+    const { result } = await createInventoryItemsWorkflow(container).run({
+      input: {
+        items: [
+          {
+            sku,
+            title: `${cap.talla} / ${cap.color}`,
+            requires_shipping: true,
+          },
+        ],
+      },
+    })
+    inventoryItemId = result[0].id
+    logger.info(`Created inventory item for ${cap.handle}.`)
+  }
+
+  try {
+    await link.create({
+      [Modules.PRODUCT]: { variant_id: variant.id },
+      [Modules.INVENTORY]: { inventory_item_id: inventoryItemId },
+      data: { required_quantity: 1 },
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!/already exists|duplicate|multiple links/i.test(message)) {
+      throw error
+    }
+  }
+
+  return inventoryItemId
+}
+
+async function findVariantBySku(query: Query, sku: string) {
+  const { data } = await query.graph({
     entity: "product_variant",
-    fields: ["sku", "inventory_items.inventory_item_id"],
+    fields: [
+      "id",
+      "sku",
+      "manage_inventory",
+      "allow_backorder",
+      "inventory_items.inventory_item_id",
+    ],
     filters: { sku },
   })
-  const variant = (
-    (variants ?? []) as {
-      inventory_items?: { inventory_item_id?: string | null }[] | null
-    }[]
-  )[0]
+  return ((data ?? []) as VariantRecord[]).find((variant) => variant.sku === sku)
+}
+
+async function findInventoryItemIdBySku(query: Query, sku: string) {
+  const { data } = await query.graph({
+    entity: "inventory_item",
+    fields: ["id", "sku"],
+    filters: { sku },
+  })
+  return ((data ?? []) as { id: string; sku?: string | null }[]).find(
+    (item) => item.sku === sku
+  )?.id
+}
+
+async function findInventoryItemId(query: Query, sku: string) {
+  const variant = await findVariantBySku(query, sku)
   const fromVariant = variant?.inventory_items?.find(
     (item) => item.inventory_item_id
   )?.inventory_item_id
@@ -369,25 +549,20 @@ async function findInventoryItemId(
     return fromVariant
   }
 
-  const { data: items } = await query.graph({
-    entity: "inventory_item",
-    fields: ["id", "sku"],
-    filters: { sku },
-  })
-  const item = ((items ?? []) as { id: string }[])[0]
-  if (!item) {
+  const itemId = await findInventoryItemIdBySku(query, sku)
+  if (!itemId) {
     throw new MedusaError(
       MedusaError.Types.UNEXPECTED_STATE,
       `Inventory item for sku ${sku} was not created.`
     )
   }
-  return item.id
+  return itemId
 }
 
 async function ensureInventoryLevel(
   container: ExecArgs["container"],
-  query: { graph: Function },
-  logger: { info: (message: string) => void },
+  query: Query,
+  logger: Logger,
   inventoryItemId: string,
   locationId: string,
   stockedQuantity: number,

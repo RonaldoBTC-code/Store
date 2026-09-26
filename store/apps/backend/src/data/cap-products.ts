@@ -9,6 +9,10 @@
  *
  * SKU, USD price, and stocked quantity are not in the repo. They stay
  * `TODO`. The seed refuses to run until each one is replaced.
+ *
+ * Once filled, each variant is created with `manage_inventory: true` and
+ * an inventory level at the Ecuador stock location. The level is created
+ * only when missing, and an existing quantity is left unchanged.
  */
 
 export const TODO = "TODO" as const

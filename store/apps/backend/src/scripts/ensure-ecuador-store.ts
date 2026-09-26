@@ -4,6 +4,7 @@ import {
   MedusaError,
   Modules,
 } from "@medusajs/framework/utils"
+import { assertSeedAllowed } from "./assert-seed-allowed"
 import {
   createApiKeysWorkflow,
   createPricePreferencesWorkflow,
@@ -190,6 +191,8 @@ export default async function ensureEcuadorStore({
 }: {
   container: MedusaContainer
 }) {
+  assertSeedAllowed()
+
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const link = container.resolve(ContainerRegistrationKeys.LINK)
@@ -409,9 +412,21 @@ async function ensureRegion(
     ],
   })
   const regions = (data ?? []) as RegionRecord[]
-  const existing = regions.find((region) =>
+  const byCountry = regions.find((region) =>
     countryCodesOf(region).includes(COUNTRY_CODE)
   )
+  const byNameAndCurrency = regions.find(
+    (region) =>
+      region.name === REGION_NAME &&
+      region.currency_code?.toLowerCase() === CURRENCY_CODE
+  )
+  const existing = byCountry ?? byNameAndCurrency
+
+  if (!byCountry && byNameAndCurrency) {
+    logger.info(
+      `Reusing region "${REGION_NAME}" (${CURRENCY_CODE}) ${byNameAndCurrency.id} instead of creating another.`
+    )
+  }
 
   if (!existing) {
     const { result } = await createRegionsWorkflow(container).run({
@@ -788,12 +803,16 @@ async function findEcuadorLocation(query: { graph: Function }) {
     ],
   })
   const locations = (data ?? []) as StockLocationRecord[]
-  return (
-    locations.find((location) => location.name === STOCK_LOCATION_NAME) ??
-    locations.find(
-      (location) =>
-        location.address?.country_code?.toLowerCase() === COUNTRY_CODE
-    )
+  const byName = locations.find(
+    (location) => location.name === STOCK_LOCATION_NAME
+  )
+  if (byName) {
+    return byName
+  }
+
+  return locations.find(
+    (location) =>
+      location.address?.country_code?.toLowerCase() === COUNTRY_CODE
   )
 }
 
@@ -868,11 +887,14 @@ async function ensureShippingOption(
     ],
   })
   const options = (data ?? []) as ShippingOptionRecord[]
-  const existing = options.find(
+  const onZone = options.filter(
+    (option) => option.service_zone_id === serviceZoneId
+  )
+  const existing = onZone.find(
     (option) =>
-      option.service_zone_id === serviceZoneId &&
-      (LEGACY_SHIPPING_NAMES.has(option.name ?? "") ||
-        option.type?.code === SHIPPING_CODE)
+      option.name === SHIPPING_NAME ||
+      LEGACY_SHIPPING_NAMES.has(option.name ?? "") ||
+      option.type?.code === SHIPPING_CODE
   )
 
   if (!existing) {
