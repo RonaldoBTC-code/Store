@@ -2,7 +2,7 @@
 
 **Scope:** Store Medusa (Gato Gang dad hats), root `C:\Users\USER\Desktop\Store`  
 **Date:** 2026-09-20  
-**Data status:** Partial. No public domain, no Search Console, no third-party volumes. Ranked by intent fit from seeds + catalog already in `store/scripts/seed-cap-products.mjs`. Do not treat order as proven search volume.
+**Data status:** Partial. No public domain, no Search Console, no third-party volumes. Ranked by intent fit from seeds + catalog in `store/apps/backend/src/data/cap-products.ts` (loaded by `src/scripts/seed-cap-products.ts`). Do not treat order as proven search volume.
 
 **Seeds used:** gorra gato · dad hat · streetwear · Gato Gang · parche bordado  
 **SKUs:** Fish Hug · Lo-Fi Cat · Busy Dog (+ Cat Online already in catalog)

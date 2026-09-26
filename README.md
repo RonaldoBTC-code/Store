@@ -83,14 +83,19 @@ Desde `store/` (Node 20+, PostgreSQL 15+, pnpm 10+):
 # backend — http://localhost:9000  (admin: /app)
 cd apps/backend
 cp .env.template .env   # set DATABASE_URL
-pnpm exec medusa db:migrate
+pnpm migrate            # schema + fresh Ecuador store seed
+pnpm seed:ec            # safe to re-run: USD, region ec, IVA 15%, shipping
+# fill TODO sku / price / stock in src/data/cap-products.ts
+pnpm seed:caps
+pnpm catalog:sync
 pnpm exec medusa develop
 
 # storefront — http://localhost:8000  (home: /ec)
 cd apps/storefront
-# .env.local: NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY
-#             NEXT_PUBLIC_MEDUSA_BACKEND_URL=http://localhost:9000
-#             NEXT_PUBLIC_DEFAULT_REGION=ec
+cp .env.template .env.local
+# NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY
+# NEXT_PUBLIC_MEDUSA_BACKEND_URL=http://localhost:9000
+# NEXT_PUBLIC_DEFAULT_REGION=ec
 pnpm dev
 ```
 
