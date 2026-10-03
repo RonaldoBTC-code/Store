@@ -2,6 +2,7 @@
 
 import { isManual, isStripeLike } from "@lib/constants"
 import { placeOrder } from "@lib/data/cart"
+import { paymentReturnUrl } from "@lib/util/payment-return-url"
 import { HttpTypes } from "@medusajs/types"
 import { Button } from "@modules/common/components/ui"
 import { useElements, useStripe } from "@stripe/react-stripe-js"
@@ -84,7 +85,10 @@ const StripePaymentButton = ({
       .confirmPayment({
         elements,
         confirmParams: {
-          return_url: `${window.location.origin}/api/payment-return?cart_id=${cart.id}&country_code=${countryCode}`,
+          return_url: paymentReturnUrl(
+            window.location.origin,
+            typeof countryCode === "string" ? countryCode : ""
+          ),
           payment_method_data: {
             billing_details: {
               name:

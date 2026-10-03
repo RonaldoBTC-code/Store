@@ -1,5 +1,10 @@
 import "server-only"
 import { cookies as nextCookies } from "next/headers"
+import {
+  parseTaxId,
+  type TaxIdMetadata,
+  type TaxIdType,
+} from "../util/ec-tax-id"
 
 export const getAuthHeaders = async (): Promise<
   { authorization: string } | Record<string, never>
@@ -124,6 +129,12 @@ export const getCartId = async () => {
 // the cross-site return navigation from a redirect-based payment method.
 export const setCartId = async (cartId: string) => {
   const cookies = await nextCookies()
+  const current = cookies.get("_medusa_cart_id")?.value
+
+  if (current && current !== cartId) {
+    cookies.set("_medusa_tax_id", "", { maxAge: -1 })
+  }
+
   cookies.set("_medusa_cart_id", cartId, {
     maxAge: 60 * 60 * 24 * 7,
     httpOnly: true,
@@ -137,4 +148,50 @@ export const removeCartId = async () => {
   cookies.set("_medusa_cart_id", "", {
     maxAge: -1,
   })
+  cookies.set("_medusa_tax_id", "", {
+    maxAge: -1,
+  })
+}
+
+const TAX_ID_TYPES: readonly TaxIdType[] = ["cedula", "ruc", "consumidor_final"]
+
+export const setStoredTaxId = async (metadata: TaxIdMetadata) => {
+  const cookies = await nextCookies()
+  cookies.set("_medusa_tax_id", JSON.stringify(metadata), {
+    maxAge: 60 * 60 * 24 * 7,
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+  })
+}
+
+export const getStoredTaxId = async (): Promise<TaxIdMetadata | null> => {
+  try {
+    const cookies = await nextCookies()
+    const raw = cookies.get("_medusa_tax_id")?.value
+
+    if (!raw) {
+      return null
+    }
+
+    const parsed = JSON.parse(raw) as {
+      tax_id?: unknown
+      tax_id_type?: unknown
+    }
+    const type = parsed.tax_id_type
+    const id = parsed.tax_id
+
+    if (typeof type !== "string" || typeof id !== "string") {
+      return null
+    }
+
+    if (!TAX_ID_TYPES.includes(type as TaxIdType)) {
+      return null
+    }
+
+    return parseTaxId(type, id)
+  } catch {
+    return null
+  }
 }

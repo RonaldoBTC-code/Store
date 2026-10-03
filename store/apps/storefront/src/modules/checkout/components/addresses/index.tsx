@@ -2,7 +2,7 @@
 import { setAddresses } from "@lib/data/cart"
 import useToggleState from "@lib/hooks/use-toggle-state"
 import compareAddresses from "@lib/util/compare-addresses"
-import { formatTaxIdLabel } from "@lib/util/ec-tax-id"
+import { formatTaxIdLabel, type TaxIdMetadata } from "@lib/util/ec-tax-id"
 import { CheckCircleSolid } from "@medusajs/icons"
 import { HttpTypes } from "@medusajs/types"
 import Divider from "@modules/common/components/divider"
@@ -18,9 +18,11 @@ import { SubmitButton } from "../submit-button"
 const Addresses = ({
   cart,
   customer,
+  taxId,
 }: {
   cart: HttpTypes.StoreCart | null
   customer: HttpTypes.StoreCustomer | null
+  taxId: TaxIdMetadata | null
 }) => {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -39,7 +41,7 @@ const Addresses = ({
   }
 
   const [message, formAction] = useActionState(setAddresses, null)
-  const taxIdLabel = formatTaxIdLabel(cart?.billing_address?.metadata)
+  const taxIdLabel = formatTaxIdLabel(taxId)
 
   return (
     <div className="bg-ink-950 text-white">
@@ -71,6 +73,7 @@ const Addresses = ({
               checked={sameAsBilling}
               onChange={toggleSameAsBilling}
               cart={cart}
+              taxId={taxId}
             />
 
             {!sameAsBilling && (

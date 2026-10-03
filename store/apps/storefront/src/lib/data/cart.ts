@@ -12,20 +12,20 @@ import {
   getCartId,
   removeCartId,
   setCartId,
+  setStoredTaxId,
 } from "./cookies"
 import { clearStoredCartId, resolveCartId } from "./cart-guards"
 import { checkoutAddressesFromForm } from "./checkout-addresses"
 import { getRegion } from "./regions"
 
 /**
- * Retrieves a cart by its ID. If no ID is provided, it will use the cart ID from the cookies.
- * @param cartId - optional - The ID of the cart to retrieve.
+ * Retrieves the cart whose id is stored in the httpOnly cookie.
  * @returns The cart object if found, or null if not found.
  */
-export async function retrieveCart(cartId?: string, fields?: string) {
-  const id = cartId || (await getCartId())
+export async function retrieveCart(fields?: string) {
+  const id = await getCartId()
   fields ??=
-    "*items, *region, *items.product, *items.variant, *items.thumbnail, *items.metadata, +items.total, *promotions, +shipping_methods.name, +billing_address.metadata"
+    "*items, *region, *items.product, *items.variant, *items.thumbnail, *items.metadata, +items.total, *promotions, +shipping_methods.name"
 
   if (!id) {
     return null
@@ -66,7 +66,7 @@ export async function getOrSetCart(countryCode: string) {
     throw new Error(`Region not found for country code: ${countryCode}`)
   }
 
-  let cart = await retrieveCart(undefined, "id,region_id")
+  let cart = await retrieveCart("id,region_id")
 
   const headers = {
     ...(await getAuthHeaders()),
@@ -228,12 +228,16 @@ export async function deleteLineItem(lineId: string) {
 }
 
 export async function setShippingMethod({
-  cartId,
   shippingMethodId,
 }: {
-  cartId: string
   shippingMethodId: string
 }) {
+  const cartId = await getCartId()
+
+  if (!cartId) {
+    throw new Error("No existing cart found when setting the shipping method")
+  }
+
   const headers = {
     ...(await getAuthHeaders()),
   }
@@ -350,7 +354,23 @@ export async function setAddresses(currentState: unknown, formData: FormData) {
       throw new Error("No form data found when setting addresses")
     }
     await resolveCartId(getCartId)
-    await updateCart(checkoutAddressesFromForm(formData))
+    const update = checkoutAddressesFromForm(formData)
+    await updateCart(update)
+    const billing = update.billing_address
+    const metadata =
+      billing && typeof billing === "object" ? billing.metadata : null
+    if (
+      metadata &&
+      typeof metadata.tax_id === "string" &&
+      (metadata.tax_id_type === "cedula" ||
+        metadata.tax_id_type === "ruc" ||
+        metadata.tax_id_type === "consumidor_final")
+    ) {
+      await setStoredTaxId({
+        tax_id: metadata.tax_id,
+        tax_id_type: metadata.tax_id_type,
+      })
+    }
   } catch (e: any) {
     return e.message
   }
@@ -361,12 +381,11 @@ export async function setAddresses(currentState: unknown, formData: FormData) {
 }
 
 /**
- * Places an order for a cart. If no cart ID is provided, it will use the cart ID from the cookies.
- * @param cartId - optional - The ID of the cart to place an order for.
+ * Places an order for the cart stored in the httpOnly cookie.
  * @returns The cart object if the order was successful, or null if not.
  */
-export async function placeOrder(cartId?: string) {
-  const id = cartId || (await getCartId())
+export async function placeOrder() {
+  const id = await getCartId()
 
   if (!id) {
     throw new Error("No existing cart found when placing an order")

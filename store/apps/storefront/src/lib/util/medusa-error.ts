@@ -1,4 +1,4 @@
-import { redactTaxIdentifiers } from "./redact-tax-id"
+import { redactRequestUrl, redactTaxIdentifiers } from "./redact-tax-id"
 
 type MedusaError = {
   response?: {
@@ -15,7 +15,7 @@ export default function medusaError(error: unknown): never {
   const err = error as MedusaError
   if (err.response) {
     const u = new URL(err.config?.url ?? "", err.config?.baseURL ?? "")
-    console.error("Resource:", u.toString())
+    console.error("Resource:", redactRequestUrl(u.toString()))
     console.error("Response data:", redactTaxIdentifiers(err.response.data))
     console.error("Status code:", err.response.status)
     console.error("Headers:", err.response.headers)

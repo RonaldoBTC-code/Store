@@ -1,6 +1,6 @@
 import { sdk } from "@lib/config"
 import { placeOrder } from "@lib/data/cart"
-import { getAuthHeaders, setCartId } from "@lib/data/cookies"
+import { getAuthHeaders, getCartId } from "@lib/data/cookies"
 import { HttpTypes } from "@medusajs/types"
 import { unstable_rethrow } from "next/navigation"
 import { NextRequest, NextResponse } from "next/server"
@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server"
 export async function GET(req: NextRequest) {
   const { origin, searchParams } = req.nextUrl
 
-  const cartId = searchParams.get("cart_id")
+  const cartId = await getCartId()
   const countryCode = searchParams.get("country_code")
   const paymentIntent = searchParams.get("payment_intent")
   const paymentIntentClientSecret = searchParams.get(
@@ -47,8 +47,6 @@ export async function GET(req: NextRequest) {
     return rejected()
   }
 
-  await setCartId(cartId)
-
   // The customer backed out or the bank declined. Stripe puts the PaymentIntent
   // back into `requires_payment_method`, so the Payment Element can mount
   // against it again — return to the payment step and let them retry.
@@ -73,7 +71,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    await placeOrder(cartId)
+    await placeOrder()
   } catch (error) {
     unstable_rethrow(error)
 
