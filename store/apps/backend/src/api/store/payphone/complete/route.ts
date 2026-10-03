@@ -1,6 +1,6 @@
 import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
-import { PAYPHONE_PROVIDER_ID } from "../../../../modules/payphone/providers"
+import { planPayphoneCompletion } from "../../../../modules/payphone/completion"
 import { classifyPayphoneMessage } from "../../../../modules/payphone/service"
 import { completePayphoneCartWorkflow } from "../../../../workflows/complete-payphone-cart"
 import { PostPayphoneCompleteSchema } from "../../../middlewares"
@@ -57,35 +57,32 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     filters: { id: clientTransactionId },
   })
   const session = (sessions as PaymentSessionRecord[])[0]
-
-  if (!session || session.provider_id !== PAYPHONE_PROVIDER_ID) {
-    declined(res, "failed")
-    return
-  }
-
-  if (!session.payment_collection_id) {
-    declined(res, "failed")
-    return
-  }
-
-  const { data: links } = await query.graph({
-    entity: "cart_payment_collection",
-    fields: ["cart_id", "payment_collection_id"],
-    filters: { payment_collection_id: session.payment_collection_id },
+  const collectionId = session?.payment_collection_id
+  const { data: links } = collectionId
+    ? await query.graph({
+        entity: "cart_payment_collection",
+        fields: ["cart_id", "payment_collection_id"],
+        filters: { payment_collection_id: collectionId },
+      })
+    : { data: [] }
+  const cartId = (links as { cart_id?: string }[])[0]?.cart_id ?? null
+  const existingOrderId = cartId ? await findOrderId(query, cartId) : null
+  const plan = planPayphoneCompletion({
+    session,
+    cartId,
+    existingOrderId,
+    payphoneTransactionId: payphoneId,
   })
-  const cartId = (links as { cart_id?: string }[])[0]?.cart_id
 
-  if (!cartId) {
+  if (plan.action === "reject") {
     declined(res, "failed")
     return
   }
 
-  const existingOrderId = await findOrderId(query, cartId)
-  if (existingOrderId) {
-    const countryCode = await cartCountry(query, cartId)
+  if (plan.action === "return_order") {
     res.status(200).json({
-      order_id: existingOrderId,
-      country_code: countryCode,
+      order_id: plan.orderId,
+      country_code: await cartCountry(query, plan.cartId),
     })
     return
   }
@@ -94,12 +91,12 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     req.scope
   ).run({
     input: {
-      cart_id: cartId,
-      session_id: session.id,
-      amount: session.amount,
-      currency_code: session.currency_code,
-      data: session.data ?? {},
-      payphone_transaction_id: payphoneId,
+      cart_id: plan.cartId,
+      session_id: plan.sessionId,
+      amount: plan.amount,
+      currency_code: plan.currencyCode,
+      data: plan.data,
+      payphone_transaction_id: plan.payphoneTransactionId,
     },
     throwOnError: false,
   })
@@ -128,11 +125,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       : ""
 
   if (!orderId) {
-    const recovered = await findOrderId(query, cartId)
+    const recovered = await findOrderId(query, plan.cartId)
     if (recovered) {
       res.status(200).json({
         order_id: recovered,
-        country_code: await cartCountry(query, cartId),
+        country_code: await cartCountry(query, plan.cartId),
       })
       return
     }
@@ -143,7 +140,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
   res.status(200).json({
     order_id: orderId,
-    country_code: await cartCountry(query, cartId),
+    country_code: await cartCountry(query, plan.cartId),
   })
 }
 

@@ -22,14 +22,15 @@ describe("Ecuador payment providers", () => {
     ])
   })
 
-  it("includes the manual provider outside production", () => {
+  it("keeps the manual provider for dev and CI end-to-end", () => {
     expect(regionPaymentProviders({ NODE_ENV: "development" })).toEqual([
       PAYPHONE_PROVIDER_ID,
       SYSTEM_PROVIDER_ID,
     ])
-    expect(regionPaymentProviders({ NODE_ENV: "test" })).toContain(
-      SYSTEM_PROVIDER_ID
-    )
+    expect(regionPaymentProviders({ NODE_ENV: "test" })).toEqual([
+      PAYPHONE_PROVIDER_ID,
+      SYSTEM_PROVIDER_ID,
+    ])
   })
 
   it("honors ALLOW_TEST_PAYMENTS=false outside production", () => {

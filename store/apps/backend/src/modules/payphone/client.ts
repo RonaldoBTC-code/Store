@@ -7,6 +7,20 @@ import { splitInclusiveIva, type PayphoneAmountSplit } from "./amounts"
  */
 export const PAYPHONE_API_BASE = "https://pay.payphonetodoesposible.com"
 export const PAYPHONE_PAYMENT_HOST = "pay.payphonetodoesposible.com"
+
+/**
+ * Shopper browser navigates here (top-level). Documented by the Prepare
+ * response examples: payWithCard and payWithPayPhone.
+ * https://docs.payphone.app/boton-de-pago
+ *
+ * This storefront does not embed that page, and it does not load a PayPhone
+ * script, image, or XHR. Storefront CSP does not need a PayPhone host in
+ * script-src, frame-src, connect-src, or img-src for this flow.
+ */
+export const PAYPHONE_BROWSER_ORIGINS = [
+  "https://pay.payphonetodoesposible.com",
+] as const
+
 const PREPARE_PATH = "/api/button/Prepare"
 const CONFIRM_PATH = "/api/button/V2/Confirm"
 const REVERSE_PATH = "/api/Reverse"
@@ -32,6 +46,15 @@ export type PayphoneTransaction = {
   lastDigits?: string
 }
 
+export interface PayphoneHttpClient {
+  prepare(input: {
+    clientTransactionId: string
+    split: PayphoneAmountSplit
+  }): Promise<PayphonePrepareResult>
+  confirm(id: number, clientTxId: string): Promise<PayphoneTransaction>
+  reverse(transactionId: number): Promise<void>
+}
+
 export type PayphoneClientOptions = {
   token: string
   storeId: string
@@ -53,7 +76,7 @@ export class PayphoneApiError extends Error {
   }
 }
 
-export class PayphoneClient {
+export class PayphoneClient implements PayphoneHttpClient {
   private readonly token: string
   private readonly storeId: string
   private readonly responseUrl: string

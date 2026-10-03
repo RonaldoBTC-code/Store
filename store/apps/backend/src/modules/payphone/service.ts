@@ -33,7 +33,7 @@ import {
   assertPayphonePaymentUrl,
   PayphoneApiError,
   PayphoneClient,
-  type PayphoneClientOptions,
+  type PayphoneHttpClient,
   type PayphoneTransaction,
 } from "./client"
 import { payphoneReverseAllowed } from "./reverse-window"
@@ -48,7 +48,17 @@ export const PayphoneResultCode = {
   failed: "PAYPHONE_FAILED",
 } as const
 
-type PayphoneOptions = PayphoneClientOptions
+export type PayphoneProviderOptions = {
+  token?: string
+  storeId?: string
+  responseUrl?: string
+  cancellationUrl?: string
+  /**
+   * Injected transport. Tests pass a fake so CI never needs PayPhone keys
+   * and never calls the network. Production leaves this unset.
+   */
+  client?: PayphoneHttpClient
+}
 
 type SessionData = Record<string, unknown>
 
@@ -64,18 +74,25 @@ type SessionData = Record<string, unknown>
  * There is no capture API for this flow. Reverse is same-day, full amount,
  * until 20:00 Ecuador. https://docs.payphone.app/api-reverse
  */
-class PayphoneProviderService extends AbstractPaymentProvider<PayphoneOptions> {
+class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOptions> {
   static identifier = "payphone"
 
   protected logger_: Logger
-  protected options_: PayphoneOptions
-  protected client_: PayphoneClient
+  protected options_: PayphoneProviderOptions
+  protected client_: PayphoneHttpClient
 
-  constructor(container: { logger: Logger }, options: PayphoneOptions) {
+  constructor(container: { logger: Logger }, options: PayphoneProviderOptions) {
     super(container, options)
     this.logger_ = container.logger
     this.options_ = options
-    this.client_ = new PayphoneClient(options)
+    this.client_ =
+      options.client ??
+      new PayphoneClient({
+        token: options.token ?? "",
+        storeId: options.storeId ?? "",
+        responseUrl: options.responseUrl ?? "",
+        cancellationUrl: options.cancellationUrl ?? "",
+      })
   }
 
   async initiatePayment(
@@ -107,6 +124,8 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneOptions> {
         clientTransactionId: sessionId,
         split,
       })
+      assertPayphonePaymentUrl(prepared.payWithCard)
+      assertPayphonePaymentUrl(prepared.payWithPayPhone)
 
       return {
         id: sessionId,
@@ -140,16 +159,32 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneOptions> {
     const unchanged = previousCents === split.amount && urlsAreTrusted
 
     if (unchanged && payWithCard && payWithPayPhone) {
+      const next = sessionData({
+        sessionId,
+        split,
+        paymentId: readString(current.payment_id) ?? "",
+        payWithCard,
+        payWithPayPhone,
+      })
+
+      if (
+        payphoneTransactionId &&
+        isServerConfirmed(current, sessionId, payphoneTransactionId, split.amount)
+      ) {
+        return {
+          status: PaymentSessionStatus.PENDING,
+          data: {
+            ...next,
+            ...confirmedSnapshot(current),
+            payphone_transaction_id: payphoneTransactionId,
+          },
+        }
+      }
+
       return {
         status: PaymentSessionStatus.PENDING,
         data: {
-          ...sessionData({
-            sessionId,
-            split,
-            paymentId: readString(current.payment_id) ?? "",
-            payWithCard,
-            payWithPayPhone,
-          }),
+          ...next,
           ...(payphoneTransactionId
             ? { payphone_transaction_id: payphoneTransactionId }
             : {}),
@@ -169,6 +204,8 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneOptions> {
         clientTransactionId: sessionId,
         split,
       })
+      assertPayphonePaymentUrl(prepared.payWithCard)
+      assertPayphonePaymentUrl(prepared.payWithPayPhone)
 
       return {
         status: PaymentSessionStatus.PENDING,
@@ -214,6 +251,13 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneOptions> {
         PayphoneResultCode.pending,
         "El pago en PayPhone todavía no se ha completado."
       )
+    }
+
+    if (isServerConfirmed(data, sessionId, payphoneId, expectedCents)) {
+      return {
+        status: PaymentSessionStatus.CAPTURED,
+        data,
+      }
     }
 
     let transaction: PayphoneTransaction
@@ -262,7 +306,11 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneOptions> {
     input: CapturePaymentInput
   ): Promise<CapturePaymentOutput> {
     const data = input.data ?? {}
-    if (data.transaction_status === "Approved" && data.transaction_id) {
+    if (
+      data.payphone_confirmed === true &&
+      data.transaction_status === "Approved" &&
+      data.transaction_id
+    ) {
       // Confirm already accepts the sale. Returning "captured" from
       // authorizePayment makes Medusa skip a second provider capture.
       // This method stays idempotent for a later admin capture attempt.
@@ -399,6 +447,10 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneOptions> {
   }
 
   private assertConfigured() {
+    if (this.options_.client) {
+      return
+    }
+
     if (!this.options_.token || !this.options_.storeId) {
       this.logger_?.error?.(
         "PayPhone provider is missing PAYPHONE_TOKEN or PAYPHONE_STORE_ID."
@@ -502,6 +554,37 @@ function sessionData(input: {
     service_cents: input.split.service,
     tip_cents: input.split.tip,
     currency_code: "usd",
+    payphone_confirmed: false,
+    transaction_status: "Pending",
+    transaction_id: null,
+  }
+}
+
+export function isServerConfirmed(
+  data: SessionData,
+  sessionId: string,
+  payphoneId: number,
+  expectedCents: number
+): boolean {
+  return (
+    data.payphone_confirmed === true &&
+    data.transaction_status === "Approved" &&
+    readOptionalId(data.transaction_id) === payphoneId &&
+    readString(data.client_transaction_id) === sessionId &&
+    readNumber(data.amount_cents) === expectedCents
+  )
+}
+
+function confirmedSnapshot(data: SessionData): SessionData {
+  return {
+    payphone_confirmed: true,
+    transaction_status: "Approved",
+    transaction_id: data.transaction_id,
+    authorization_code: data.authorization_code,
+    transaction_date: data.transaction_date,
+    status_code: data.status_code,
+    card_brand: data.card_brand,
+    last_digits: data.last_digits,
   }
 }
 
@@ -523,6 +606,7 @@ function confirmedData(
     amount_without_tax_cents: previous.amount_without_tax_cents,
     tax_cents: previous.tax_cents,
     currency_code: "usd",
+    payphone_confirmed: true,
     payphone_transaction_id: transaction.transactionId,
     transaction_id: transaction.transactionId,
     transaction_status: "Approved",

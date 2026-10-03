@@ -7,9 +7,10 @@ type Env = {
 }
 
 /**
- * Manual checkout (`pp_system_default`) is available outside production.
+ * Manual checkout (`pp_system_default`) is the dev and CI end-to-end path.
+ * `NODE_ENV` of `development` or `test` keeps it. Production hides it.
  * `ALLOW_TEST_PAYMENTS=true` keeps it in production. `false` disables it
- * even in development.
+ * even in development and CI.
  */
 export function testPaymentsAllowed(env: Env = process.env): boolean {
   if (env.ALLOW_TEST_PAYMENTS === "true") {
