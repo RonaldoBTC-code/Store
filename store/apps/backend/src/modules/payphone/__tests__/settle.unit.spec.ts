@@ -1,3 +1,4 @@
+import { MedusaError } from "@medusajs/framework/utils"
 import { PayphoneResultCode } from "../service"
 import { settlePayphonePayment, type PayphoneClaimStore } from "../settle"
 import type { PayphoneHttpClient, PayphoneTransaction } from "../client"
@@ -58,11 +59,13 @@ function harness(options: {
   payphone?: PayphoneTransaction | null
   requestCartId?: string | null
   initiatedAmountCents?: number
+  complete?: () => Promise<{ orderId: string }>
 } = {}) {
   const claims = memoryClaims()
   const confirmCalls: unknown[] = []
   const reverseCalls: number[] = []
   let completes = 0
+  let completeAttempts = 0
   const client: PayphoneHttpClient = {
     prepare: async () => {
       throw new Error("prepare is not part of settle")
@@ -90,6 +93,11 @@ function harness(options: {
           shippingTaxTotal: 0,
         }),
         complete: async () => {
+          completeAttempts += 1
+          if (options.complete) {
+            return options.complete()
+          }
+
           completes += 1
           return { orderId: "order_01SETTLE" }
         },
@@ -109,7 +117,14 @@ function harness(options: {
       }
     )
 
-  return { run, claims, confirmCalls, reverseCalls, completes: () => completes }
+  return {
+    run,
+    claims,
+    confirmCalls,
+    reverseCalls,
+    completes: () => completes,
+    completeAttempts: () => completeAttempts,
+  }
 }
 
 describe("settlePayphonePayment", () => {
@@ -156,6 +171,25 @@ describe("settlePayphonePayment", () => {
     expect(confirmCalls).toHaveLength(0)
     expect(completes()).toBe(0)
     expect(claims.rows.size).toBe(0)
+  })
+
+  it("reverses an approved confirm when the cart completion hook rejects", async () => {
+    const { run, confirmCalls, reverseCalls, completes, completeAttempts, claims } =
+      harness({
+        complete: async () => {
+          throw new MedusaError(
+            MedusaError.Types.INVALID_DATA,
+            "La cédula o el RUC no es válido."
+          )
+        },
+      })
+
+    await expect(run()).rejects.toThrow(PayphoneResultCode.failed)
+    expect(confirmCalls).toHaveLength(1)
+    expect(completeAttempts()).toBe(1)
+    expect(reverseCalls).toEqual([42])
+    expect(completes()).toBe(0)
+    expect(claims.rows.get(SESSION)?.status).toBe("rejected")
   })
 
   it("does not confirm when the cart total changed after payment started", async () => {

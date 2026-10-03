@@ -51,6 +51,24 @@ class PayphoneClaimModuleService extends MedusaService({
     })
   }
 
+  async getByClientTransactionId(clientTransactionId: string): Promise<{
+    status: string
+    orderId: string | null
+  } | null> {
+    const [claim] = await this.listPayphoneClaims({
+      client_transaction_id: clientTransactionId,
+    })
+
+    if (!claim) {
+      return null
+    }
+
+    return {
+      status: claim.status,
+      orderId: claim.order_id ?? null,
+    }
+  }
+
   async markRejected(clientTransactionId: string): Promise<void> {
     const [claim] = await this.listPayphoneClaims({
       client_transaction_id: clientTransactionId,

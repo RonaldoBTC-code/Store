@@ -1,4 +1,7 @@
-import type { BigNumberInput } from "@medusajs/framework/types"
+import type {
+  BigNumberInput,
+  MedusaContainer,
+} from "@medusajs/framework/types"
 import {
   ContainerRegistrationKeys,
   MedusaError,
@@ -12,8 +15,14 @@ import {
   StepResponse,
 } from "@medusajs/framework/workflows-sdk"
 import { PayphoneClient } from "../modules/payphone/client"
+import {
+  fulfillPayphoneSale,
+  type PayphoneFulfillInput,
+  type PayphoneFulfillResult,
+} from "../modules/payphone/fulfill"
 import { PAYPHONE_CLAIM_MODULE } from "../modules/payphone-claim"
 import type PayphoneClaimModuleService from "../modules/payphone-claim/service"
+import type { PayphoneCompletionSession } from "../modules/payphone/completion"
 import {
   settlePayphonePayment,
   type PayphoneCartSnapshot,
@@ -47,30 +56,19 @@ const settlePayphoneCartStep = createStep(
       PAYPHONE_CLAIM_MODULE
     ) as PayphoneClaimModuleService
     const query = container.resolve(ContainerRegistrationKeys.QUERY)
-    const payment = container.resolve(Modules.PAYMENT)
     const settled = await settlePayphonePayment(
       {
         claims,
         client: payphoneClientFromEnv(),
         loadCart: async (cartId) => loadCart(query, cartId),
-        complete: async (confirmed) => {
-          await payment.updatePaymentSession({
-            id: input.session_id,
+        complete: (confirmed) =>
+          runCompleteCartWorkflow(container, {
+            cartId: input.cart_id,
+            sessionId: input.session_id,
             amount: input.amount,
-            currency_code: input.currency_code,
-            data: confirmed,
-          })
-
-          const { result } = await completeCartWorkflow(container).run({
-            input: { id: input.cart_id },
-          })
-          const orderId =
-            result && typeof result === "object" && "id" in result
-              ? String((result as { id?: string }).id ?? "")
-              : ""
-
-          return { orderId }
-        },
+            currencyCode: input.currency_code,
+            confirmed,
+          }),
       },
       {
         sessionCartId: input.cart_id,
@@ -88,9 +86,116 @@ const settlePayphoneCartStep = createStep(
 )
 
 /**
+ * Writes the confirmed PayPhone session, then runs Medusa's
+ * `completeCartWorkflow`. Checkout validation hooks, including cédula / RUC
+ * checks, run inside that workflow. A hook rejection throws out of here so
+ * the caller can reverse the PayPhone sale. This function does not create
+ * the order itself.
+ */
+export async function runCompleteCartWorkflow(
+  container: { resolve: (key: string) => PaymentSessionUpdater },
+  input: {
+    cartId: string
+    sessionId: string
+    amount: BigNumberInput
+    currencyCode: string
+    confirmed: Record<string, unknown>
+  }
+): Promise<{ orderId: string }> {
+  const payment = container.resolve(Modules.PAYMENT)
+  await payment.updatePaymentSession({
+    id: input.sessionId,
+    amount: input.amount,
+    currency_code: input.currencyCode,
+    data: input.confirmed,
+  })
+
+  const { result } = await completeCartWorkflow(
+    container as MedusaContainer
+  ).run({
+    input: { id: input.cartId },
+  })
+  const orderId =
+    result && typeof result === "object" && "id" in result
+      ? String((result as { id?: string }).id ?? "")
+      : ""
+
+  return { orderId }
+}
+
+type PaymentSessionUpdater = {
+  updatePaymentSession: (data: {
+    id: string
+    amount: BigNumberInput
+    currency_code: string
+    data: Record<string, unknown>
+  }) => Promise<unknown>
+}
+
+type QueryGraph = {
+  graph: (args: {
+    entity: string
+    fields: string[]
+    filters: Record<string, unknown>
+  }) => Promise<{ data: unknown }>
+}
+
+/**
+ * Shopper return and PayPhone notification both enter here. The settle step
+ * confirms with PayPhone, then `completeCartWorkflow` creates the order.
+ * The claim insert, the HTTP call, and the order insert are separate writes.
+ */
+export async function fulfillPayphoneSaleFromScope(
+  scope: { resolve: (key: string) => unknown },
+  input: PayphoneFulfillInput
+): Promise<PayphoneFulfillResult> {
+  const query = scope.resolve(ContainerRegistrationKeys.QUERY) as QueryGraph
+  const claims = scope.resolve(
+    PAYPHONE_CLAIM_MODULE
+  ) as PayphoneClaimModuleService
+
+  return fulfillPayphoneSale(
+    {
+      loadSession: (clientTransactionId) =>
+        loadSession(query, clientTransactionId),
+      loadCartId: (paymentCollectionId) =>
+        loadCartId(query, paymentCollectionId),
+      findOrderId: (cartId) => findOrderId(query, cartId),
+      findClaim: (clientTransactionId) =>
+        claims.getByClientTransactionId(clientTransactionId),
+      settle: async (workflowInput) => {
+        const { errors, result, transaction } =
+          await completePayphoneCartWorkflow(scope as MedusaContainer).run({
+            input: workflowInput,
+            throwOnError: false,
+          })
+
+        if (!transaction.hasFinished()) {
+          throw payphoneShopperError("failed")
+        }
+
+        const failure = errors?.[0]?.error
+        if (failure) {
+          throw failure
+        }
+
+        const orderId =
+          result && typeof result === "object" && "id" in result
+            ? String((result as { id?: string }).id ?? "")
+            : ""
+
+        return { orderId }
+      },
+    },
+    input
+  )
+}
+
+/**
  * Inserts the unique PayPhone claim, confirms the sale, then completes the
- * cart. Those are separate writes. This workflow does not wrap the PayPhone
- * HTTP call and the order insert in one database transaction.
+ * cart through `completeCartWorkflow`. Those are separate writes. This
+ * workflow does not wrap the PayPhone HTTP call and the order insert in one
+ * database transaction.
  */
 export const completePayphoneCartWorkflow = createWorkflow(
   "complete-payphone-cart",
@@ -158,4 +263,44 @@ async function loadCart(
     shippingTotal: cart.shipping_total,
     shippingTaxTotal: cart.shipping_tax_total,
   }
+}
+
+async function loadSession(
+  query: QueryGraph,
+  clientTransactionId: string
+): Promise<PayphoneCompletionSession | undefined> {
+  const { data } = await query.graph({
+    entity: "payment_session",
+    fields: [
+      "id",
+      "amount",
+      "currency_code",
+      "provider_id",
+      "data",
+      "payment_collection_id",
+    ],
+    filters: { id: clientTransactionId },
+  })
+
+  return (data as PayphoneCompletionSession[])[0]
+}
+
+async function loadCartId(query: QueryGraph, paymentCollectionId: string) {
+  const { data } = await query.graph({
+    entity: "cart_payment_collection",
+    fields: ["cart_id", "payment_collection_id"],
+    filters: { payment_collection_id: paymentCollectionId },
+  })
+
+  return (data as { cart_id?: string }[])[0]?.cart_id ?? null
+}
+
+async function findOrderId(query: QueryGraph, cartId: string) {
+  const { data } = await query.graph({
+    entity: "order_cart",
+    fields: ["order_id", "cart_id"],
+    filters: { cart_id: cartId },
+  })
+
+  return (data as { order_id?: string }[])[0]?.order_id || null
 }
