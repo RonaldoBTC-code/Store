@@ -321,3 +321,130 @@ describe("store response sanitizer", () => {
     expect(sent[6]).toBe(buffer)
   })
 })
+
+const TEST_CEDULA = "1710034065"
+const TEST_RUC = "1790085783001"
+const FIELD_QUERIES = [
+  "",
+  "?fields=*billing_address.metadata",
+  "?fields=+billing_address.*",
+]
+
+function digitRuns(serialized: string): string[] {
+  return serialized.match(/\d{10,}/g) ?? []
+}
+
+function runsMatchingTaxId(serialized: string, taxId: string): string[] {
+  return digitRuns(serialized).filter(
+    (run) => run.includes(taxId) || taxId.includes(run)
+  )
+}
+
+function hitStoreRoute(url: string, body: unknown): string {
+  let sent = ""
+  const res = {
+    json(payload?: unknown) {
+      return this.send(JSON.stringify(payload))
+    },
+    send(payload?: unknown) {
+      sent = typeof payload === "string" ? payload : JSON.stringify(payload)
+      return payload
+    },
+  }
+
+  installStoreTaxIdSanitizer(res)
+  res.json(body)
+  return sent
+}
+
+describe("store routes do not serialize the cart tax id", () => {
+  it("drops every 10-digit run of the test cédula and RUC", () => {
+    const hits: string[] = []
+
+    for (const [taxId, type] of [
+      [TEST_CEDULA, "cedula"],
+      [TEST_RUC, "ruc"],
+    ] as const) {
+      const update = {
+        billing_address: {
+          city: "Quito",
+          phone: "0991234567",
+          metadata: {
+            tax_id: taxId,
+            tax_id_type: type,
+            note: "keep",
+          },
+        },
+        shipping_address: {
+          city: "Quito",
+          phone: "0991234567",
+          metadata: { tax_id: taxId, tax_id_type: type },
+        },
+      }
+      expect(applyBillingTaxId(update)).toBeNull()
+
+      const cart = { id: "cart_1", email: "ana@example.com", ...update }
+      const order = {
+        id: "order_1",
+        email: cart.email,
+        billing_address: cart.billing_address,
+        shipping_address: cart.shipping_address,
+      }
+      const address = {
+        id: "addr_1",
+        city: "Quito",
+        phone: "0991234567",
+        metadata: { tax_id: taxId, tax_id_type: type, label: "home" },
+      }
+      const payment = {
+        payment_collection: {
+          id: "pay_1",
+          payment_sessions: [
+            { data: { metadata: { tax_id: taxId, tax_id_type: type } } },
+          ],
+        },
+        cart,
+      }
+      const errorBody = {
+        type: "invalid_data",
+        message: "The cart could not be completed.",
+        cart,
+      }
+      const bodies = [
+        { path: "/store/carts/cart_1", body: { cart } },
+        {
+          path: "/store/carts/cart_1/complete",
+          body: { type: "order", order },
+        },
+        { path: "/store/orders/order_1", body: { order } },
+        { path: "/store/orders", body: { orders: [order] } },
+        { path: "/store/payment-collections/pay_1", body: payment },
+        {
+          path: "/store/customers/me",
+          body: { customer: { addresses: [address] } },
+        },
+        { path: "/store/customers/me/addresses", body: { addresses: [address] } },
+        { path: "/store/carts/cart_1", body: errorBody },
+      ]
+
+      for (const query of FIELD_QUERIES) {
+        for (const entry of bodies) {
+          const url = `${entry.path}${query}`
+          const raw = JSON.stringify(entry.body)
+          expect(runsMatchingTaxId(raw, taxId).length).toBeGreaterThan(0)
+
+          const serialized = hitStoreRoute(url, entry.body)
+
+          expect(isStoreApiPath(url)).toBe(true)
+          expect(runsMatchingTaxId(serialized, taxId)).toEqual([])
+          expect(serialized).toContain('"tax_id_set":true')
+          expect(serialized).toContain('"tax_id_kind":"identificado"')
+          expect(serialized).toContain("0991234567")
+          hits.push(`${type} ${url}`)
+        }
+      }
+    }
+
+    expect(hits).toHaveLength(FIELD_QUERIES.length * 8 * 2)
+  })
+})
