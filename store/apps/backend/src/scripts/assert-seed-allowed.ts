@@ -13,22 +13,18 @@ const LOCAL_DATABASE_HOSTS = new Set([
   "postgres",
 ])
 
+const PRODUCTION_NODE_ENVS = new Set(["production", "prod"])
+
 /**
  * Product and demo seeds are for local dev and CI.
  * Base store setup used by `medusa db:migrate` does not call this.
- * Refuses production, and refuses a non-local database host, unless
- * ALLOW_PROD_SEED=true. Errors never include the connection string.
+ *
+ * The database host is the primary check. NODE_ENV is also refused when it
+ * normalizes to production or prod. Errors never include the connection string.
  */
 export function assertSeedAllowed(env: SeedEnv = process.env) {
   if (env.ALLOW_PROD_SEED === "true") {
     return
-  }
-
-  if (env.NODE_ENV === "production") {
-    throw new MedusaError(
-      MedusaError.Types.NOT_ALLOWED,
-      "Refusing to run a seed script while NODE_ENV=production. Set ALLOW_PROD_SEED=true to opt in."
-    )
   }
 
   if (!databaseHostIsLocal(env.DATABASE_URL)) {
@@ -37,6 +33,20 @@ export function assertSeedAllowed(env: SeedEnv = process.env) {
       "Refusing to run a seed script because the database host is non-local. Set ALLOW_PROD_SEED=true to opt in."
     )
   }
+
+  if (isProductionNodeEnv(env.NODE_ENV)) {
+    throw new MedusaError(
+      MedusaError.Types.NOT_ALLOWED,
+      "Refusing to run a seed script while NODE_ENV=production. Set ALLOW_PROD_SEED=true to opt in."
+    )
+  }
+}
+
+export function isProductionNodeEnv(nodeEnv: string | undefined) {
+  if (!nodeEnv?.trim()) {
+    return false
+  }
+  return PRODUCTION_NODE_ENVS.has(nodeEnv.trim().toLowerCase())
 }
 
 export function databaseHostIsLocal(databaseUrl: string | undefined) {

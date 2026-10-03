@@ -4,7 +4,18 @@ import {
   MedusaError,
   Modules,
 } from "@medusajs/framework/utils"
-import { shouldDeleteMisplacedEcuadorZones } from "./ecuador-zone-cleanup"
+import {
+  ecuadorReplacementIsReady,
+  isCountryLevelEcuadorZone,
+  shouldDeleteMisplacedEcuadorZones,
+} from "./ecuador-zone-cleanup"
+import {
+  namedStockLocation,
+  paymentProvidersForRegion,
+  planIva,
+  planStoreCurrencies,
+  SYSTEM_PAYMENT_PROVIDER_ID,
+} from "./ecuador-store-policy"
 import {
   createApiKeysWorkflow,
   createPricePreferencesWorkflow,
@@ -17,7 +28,6 @@ import {
   createStoresWorkflow,
   createTaxRatesWorkflow,
   createTaxRegionsWorkflow,
-  updateTaxRatesWorkflow,
   deleteServiceZonesWorkflow,
   deleteShippingOptionsWorkflow,
   linkSalesChannelsToApiKeyWorkflow,
@@ -34,7 +44,7 @@ const CURRENCY_CODE = "usd"
 const STORE_NAME = "Gato Gang"
 const SALES_CHANNEL_NAME = "Default Sales Channel"
 const PUBLISHABLE_KEY_TITLE = "Default Publishable API Key"
-const PAYMENT_PROVIDER_ID = "pp_system_default"
+const PAYMENT_PROVIDER_ID = SYSTEM_PAYMENT_PROVIDER_ID
 const TAX_PROVIDER_ID = "tp_system"
 const FULFILLMENT_PROVIDER_ID = "manual_manual"
 const STOCK_LOCATION_NAME = "Ecuador"
@@ -91,6 +101,8 @@ type StoreRecord = {
   id: string
   name?: string | null
   default_sales_channel_id?: string | null
+  default_region_id?: string | null
+  default_location_id?: string | null
   supported_currencies?: StoreCurrencyRecord[] | null
 }
 
@@ -106,7 +118,13 @@ type ApiKeyRecord = {
   sales_channels?: IdRecord[] | null
 }
 
-type GeoZoneRecord = { country_code?: string | null }
+type GeoZoneRecord = {
+  country_code?: string | null
+  type?: string | null
+  province_code?: string | null
+  city?: string | null
+  postal_expression?: unknown
+}
 
 type ServiceZoneRecord = {
   id: string
@@ -156,20 +174,6 @@ const countryCodesOf = (region: RegionRecord) =>
     .map((country) => country.iso_2?.toLowerCase())
     .filter((code): code is string => Boolean(code))
 
-const zoneCountryCodes = (zone: ServiceZoneRecord) =>
-  (zone.geo_zones ?? [])
-    .map((geoZone) => geoZone.country_code?.toLowerCase())
-    .filter((code): code is string => Boolean(code))
-
-const zoneCoversEcuador = (zone: ServiceZoneRecord) =>
-  zoneCountryCodes(zone).includes(COUNTRY_CODE) ||
-  zone.name === SERVICE_ZONE_NAME
-
-const zoneIsEcuadorOnly = (zone: ServiceZoneRecord) => {
-  const codes = zoneCountryCodes(zone)
-  return codes.length === 1 && codes[0] === COUNTRY_CODE
-}
-
 const isDuplicateLinkError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error)
   return /already exists|duplicate|multiple links|Cannot create multiple/i.test(
@@ -189,6 +193,10 @@ const isDuplicateLinkError = (error: unknown) => {
  * This runs from `medusa db:migrate` and from `pnpm seed:ec`. It is not
  * behind the product-seed guard, so a production migrate can create the
  * base store. Product and demo seeding stay gated separately.
+ *
+ * On a database that already has store defaults, currencies, or a default
+ * tax rate, those values are left in place. pp_system_default is added only
+ * when the Ecuador region has no payment provider yet.
  */
 export default async function ensureEcuadorStore({
   container,
@@ -206,12 +214,14 @@ export default async function ensureEcuadorStore({
   await ensurePublishableKey(container, query, logger, salesChannelId)
   const storeId = await ensureStore(container, query, logger, salesChannelId)
   const region = await ensureRegion(container, query, logger)
-  await updateStoresWorkflow(container).run({
-    input: {
-      selector: { id: storeId },
-      update: { default_region_id: region.id },
-    },
-  })
+  await assignStoreDefault(
+    container,
+    query,
+    logger,
+    storeId,
+    "default_region_id",
+    region.id
+  )
   await ensureIva(container, query, logger)
   await ensureTaxInclusivePrices(container, query, logger, region.id)
   const shippingProfileId = await ensureShippingProfile(container, query, logger)
@@ -230,6 +240,19 @@ export default async function ensureEcuadorStore({
     shippingProfileId,
     region.id
   )
+  await removeMisplacedEcuadorZones(container, query, logger, {
+    ecuadorLocationId: locationId,
+    ecuadorServiceZoneId: serviceZoneId,
+    restoreShipping: () =>
+      ensureShippingOption(
+        container,
+        query,
+        logger,
+        serviceZoneId,
+        shippingProfileId,
+        region.id
+      ),
+  })
   await ensureLocationSalesChannel(
     container,
     query,
@@ -237,12 +260,14 @@ export default async function ensureEcuadorStore({
     locationId,
     salesChannelId
   )
-  await updateStoresWorkflow(container).run({
-    input: {
-      selector: { id: storeId },
-      update: { default_location_id: locationId },
-    },
-  })
+  await assignStoreDefault(
+    container,
+    query,
+    logger,
+    storeId,
+    "default_location_id",
+    locationId
+  )
 
   logger.info(
     "Ecuador setup complete. Default currency USD, region ec, IVA 15% tax-inclusive, flat shipping 10 USD."
@@ -259,9 +284,9 @@ async function ensureSalesChannel(
     fields: ["id", "name"],
   })
   const channels = (data ?? []) as SalesChannelRecord[]
-  const existing =
-    channels.find((channel) => channel.name === SALES_CHANNEL_NAME) ??
-    channels[0]
+  const existing = channels.find(
+    (channel) => channel.name === SALES_CHANNEL_NAME
+  )
 
   if (existing) {
     logger.info(`Sales channel already exists (${existing.name}).`)
@@ -295,10 +320,9 @@ async function ensurePublishableKey(
     fields: ["id", "title", "type", "sales_channels.id"],
   })
   const keys = (data ?? []) as ApiKeyRecord[]
-  const publishable = keys.filter((key) => key.type === "publishable")
-  const existing =
-    publishable.find((key) => key.title === PUBLISHABLE_KEY_TITLE) ??
-    publishable[0]
+  const existing = keys.find(
+    (key) => key.type === "publishable" && key.title === PUBLISHABLE_KEY_TITLE
+  )
 
   let keyId = existing?.id
   if (!keyId) {
@@ -349,6 +373,8 @@ async function ensureStore(
       "id",
       "name",
       "default_sales_channel_id",
+      "default_region_id",
+      "default_location_id",
       "supported_currencies.currency_code",
       "supported_currencies.is_default",
     ],
@@ -376,26 +402,73 @@ async function ensureStore(
     return created.id
   }
 
-  const existingCodes = (store.supported_currencies ?? [])
-    .map((currency) => currency.currency_code?.toLowerCase())
-    .filter((code): code is string => Boolean(code) && code !== CURRENCY_CODE)
-  const supported = [CURRENCY_CODE, ...existingCodes]
+  const currencyPlan = planStoreCurrencies(store.supported_currencies ?? [])
+  const update: {
+    default_sales_channel_id?: string
+    supported_currencies?: { currency_code: string; is_default: boolean }[]
+  } = {}
+
+  if (!store.default_sales_channel_id) {
+    update.default_sales_channel_id = salesChannelId
+  }
+
+  if (currencyPlan.action === "set-default-usd") {
+    update.supported_currencies = [
+      { currency_code: CURRENCY_CODE, is_default: true },
+    ]
+  } else if (currencyPlan.action === "add-usd") {
+    update.supported_currencies = currencyPlan.currencies
+  } else {
+    logger.info("Leaving store currencies unchanged.")
+  }
+
+  if (!Object.keys(update).length) {
+    return store.id
+  }
 
   await updateStoresWorkflow(container).run({
     input: {
       selector: { id: store.id },
-      update: {
-        default_sales_channel_id:
-          store.default_sales_channel_id || salesChannelId,
-        supported_currencies: supported.map((currency_code) => ({
-          currency_code,
-          is_default: currency_code === CURRENCY_CODE,
-        })),
-      },
+      update,
     },
   })
-  logger.info("Set USD as the store default currency.")
+  if (currencyPlan.action === "set-default-usd") {
+    logger.info("Set USD as the store default currency.")
+  }
+  if (currencyPlan.action === "add-usd") {
+    logger.info("Added USD without changing the existing default currency.")
+  }
   return store.id
+}
+
+async function assignStoreDefault(
+  container: MedusaContainer,
+  query: { graph: Function },
+  logger: { info: (message: string) => void },
+  storeId: string,
+  field: "default_region_id" | "default_location_id",
+  value: string
+) {
+  const { data } = await query.graph({
+    entity: "store",
+    fields: ["id", field],
+    filters: { id: storeId },
+  })
+  const store = ((data ?? []) as StoreRecord[])[0]
+  const current = store?.[field]
+
+  if (current) {
+    logger.info(`Leaving ${field} unchanged (${current}).`)
+    return
+  }
+
+  await updateStoresWorkflow(container).run({
+    input: {
+      selector: { id: storeId },
+      update: { [field]: value },
+    },
+  })
+  logger.info(`Set ${field} to ${value}.`)
 }
 
 async function ensureRegion(
@@ -471,8 +544,13 @@ async function ensureRegion(
   if (existing.currency_code?.toLowerCase() !== CURRENCY_CODE) {
     update.currency_code = CURRENCY_CODE
   }
-  if (!providerIds.includes(PAYMENT_PROVIDER_ID)) {
-    update.payment_providers = [...providerIds, PAYMENT_PROVIDER_ID]
+  const providers = paymentProvidersForRegion(providerIds)
+  if (providers) {
+    update.payment_providers = providers
+  } else {
+    logger.info(
+      `Leaving payment providers on region ${existing.id} unchanged (${providerIds.join(", ")}).`
+    )
   }
 
   if (Object.keys(update).length) {
@@ -531,31 +609,10 @@ async function ensureIva(
   }
 
   const rates = existing.tax_rates ?? []
-  const defaultRate = rates.find((rate) => rate.is_default) ?? rates[0]
+  const ivaPlan = planIva(rates)
 
-  if (
-    defaultRate &&
-    defaultRate.code === IVA_CODE &&
-    Number(defaultRate.rate) === IVA_RATE &&
-    defaultRate.is_default
-  ) {
-    logger.info("Ecuador IVA 15% default tax rate already exists.")
-    return
-  }
-
-  if (defaultRate) {
-    await updateTaxRatesWorkflow(container).run({
-      input: {
-        selector: { id: defaultRate.id },
-        update: {
-          name: IVA_NAME,
-          code: IVA_CODE,
-          rate: IVA_RATE,
-          is_default: true,
-        },
-      },
-    })
-    logger.info("Updated the Ecuador default tax rate to IVA 15%.")
+  if (ivaPlan.action === "noop") {
+    logger.info(`Leaving the existing ${ivaPlan.reason} unchanged.`)
     return
   }
 
@@ -566,11 +623,15 @@ async function ensureIva(
         name: IVA_NAME,
         code: IVA_CODE,
         rate: IVA_RATE,
-        is_default: true,
+        is_default: ivaPlan.isDefault,
       },
     ],
   })
-  logger.info("Added IVA 15% as the default tax rate for Ecuador.")
+  logger.info(
+    ivaPlan.isDefault
+      ? "Added IVA 15% as the default tax rate for Ecuador."
+      : "Added IVA 15% without replacing the existing default tax rate."
+  )
 }
 
 async function ensureTaxInclusivePrices(
@@ -696,9 +757,16 @@ async function ensureFulfillment(
         ],
       },
     })
+    const createdId = result[0]?.id
+    if (!createdId) {
+      throw new MedusaError(
+        MedusaError.Types.UNEXPECTED_STATE,
+        "No stock location named Ecuador exists, and creating one failed. Refusing to use another location with an ec address."
+      )
+    }
     logger.info(`Created stock location ${STOCK_LOCATION_NAME}.`)
     location = {
-      id: result[0].id,
+      id: createdId,
       name: STOCK_LOCATION_NAME,
       fulfillment_sets: [],
       fulfillment_providers: [],
@@ -719,13 +787,12 @@ async function ensureFulfillment(
     })
   }
 
-  await removeMisplacedEcuadorZones(container, query, logger, location.id)
   location = (await findEcuadorLocation(query)) ?? location
 
   const sets = location.fulfillment_sets ?? []
   let serviceZone = sets
     .flatMap((set) => set.service_zones ?? [])
-    .find((zone) => zoneCoversEcuador(zone))
+    .find((zone) => isCountryLevelEcuadorZone(zone))
 
   if (!serviceZone) {
     const fulfillmentSet = sets[0]
@@ -800,29 +867,27 @@ async function findEcuadorLocation(query: { graph: Function }) {
       "fulfillment_sets.name",
       "fulfillment_sets.service_zones.id",
       "fulfillment_sets.service_zones.name",
+      "fulfillment_sets.service_zones.geo_zones.type",
       "fulfillment_sets.service_zones.geo_zones.country_code",
+      "fulfillment_sets.service_zones.geo_zones.province_code",
+      "fulfillment_sets.service_zones.geo_zones.city",
+      "fulfillment_sets.service_zones.geo_zones.postal_expression",
       "sales_channels.id",
     ],
   })
   const locations = (data ?? []) as StockLocationRecord[]
-  const byName = locations.find(
-    (location) => location.name === STOCK_LOCATION_NAME
-  )
-  if (byName) {
-    return byName
-  }
-
-  return locations.find(
-    (location) =>
-      location.address?.country_code?.toLowerCase() === COUNTRY_CODE
-  )
+  return namedStockLocation(locations, STOCK_LOCATION_NAME)
 }
 
 async function removeMisplacedEcuadorZones(
   container: MedusaContainer,
   query: { graph: Function },
   logger: { info: (message: string) => void; warn: (message: string) => void },
-  ecuadorLocationId: string
+  input: {
+    ecuadorLocationId: string
+    ecuadorServiceZoneId: string
+    restoreShipping: () => Promise<void>
+  }
 ) {
   const { data } = await query.graph({
     entity: "stock_location",
@@ -831,15 +896,25 @@ async function removeMisplacedEcuadorZones(
       "name",
       "fulfillment_sets.service_zones.id",
       "fulfillment_sets.service_zones.name",
+      "fulfillment_sets.service_zones.geo_zones.type",
       "fulfillment_sets.service_zones.geo_zones.country_code",
+      "fulfillment_sets.service_zones.geo_zones.province_code",
+      "fulfillment_sets.service_zones.geo_zones.city",
+      "fulfillment_sets.service_zones.geo_zones.postal_expression",
     ],
   })
   const locations = (data ?? []) as StockLocationRecord[]
+  const ecuador = locations.find(
+    (location) => location.id === input.ecuadorLocationId
+  )
+  const ecuadorZone = (ecuador?.fulfillment_sets ?? [])
+    .flatMap((set) => set.service_zones ?? [])
+    .find((zone) => zone.id === input.ecuadorServiceZoneId)
   const misplaced = locations
-    .filter((location) => location.id !== ecuadorLocationId)
+    .filter((location) => location.id !== input.ecuadorLocationId)
     .flatMap((location) => location.fulfillment_sets ?? [])
     .flatMap((set) => set.service_zones ?? [])
-    .filter((zone) => zoneIsEcuadorOnly(zone))
+    .filter((zone) => isCountryLevelEcuadorZone(zone))
 
   if (!misplaced.length) {
     return
@@ -848,43 +923,61 @@ async function removeMisplacedEcuadorZones(
   const zoneIds = misplaced.map((zone) => zone.id)
   const { data: options } = await query.graph({
     entity: "shipping_option",
-    fields: ["id", "name", "service_zone_id"],
+    fields: ["id", "service_zone_id"],
     filters: { service_zone_id: zoneIds },
   })
   const optionIds = ((options ?? []) as ShippingOptionRecord[]).map(
     (option) => option.id
   )
-  const optionNames = ((options ?? []) as ShippingOptionRecord[])
-    .map((option) => option.name)
-    .filter((name): name is string => Boolean(name))
-  const zoneNames = misplaced
-    .map((zone) => zone.name)
-    .filter((name): name is string => Boolean(name))
+  const { data: ecuadorOptions } = await query.graph({
+    entity: "shipping_option",
+    fields: ["id", "service_zone_id"],
+    filters: { service_zone_id: input.ecuadorServiceZoneId },
+  })
+  const ecuadorOptionIds = ((ecuadorOptions ?? []) as ShippingOptionRecord[])
+    .map((option) => option.id)
+    .filter((id) => Boolean(id))
+  const idLog = `service zone ids: ${zoneIds.join(", ")}; shipping option ids: ${optionIds.join(", ") || "none"}`
 
-  if (!shouldDeleteMisplacedEcuadorZones()) {
+  if (
+    !ecuadorReplacementIsReady({
+      hasCountryZone: Boolean(
+        ecuadorZone && isCountryLevelEcuadorZone(ecuadorZone)
+      ),
+      shippingOptionIds: ecuadorOptionIds,
+    })
+  ) {
     logger.warn(
-      [
-        "Dry run: leaving Ecuador-only service zones that belong to another stock location.",
-        `Service zones: ${zoneNames.join(", ") || zoneIds.join(", ")}.`,
-        `Shipping options: ${optionNames.join(", ") || "none"}.`,
-        "Set FIX_EC_ZONES=true to delete them.",
-      ].join(" ")
+      `Skipping zone cleanup because the Ecuador stock location does not yet have a country-level zone and shipping option. ${idLog}.`
     )
     return
   }
 
-  if (optionIds.length) {
-    await deleteShippingOptionsWorkflow(container).run({
-      input: { ids: optionIds },
-    })
+  if (!shouldDeleteMisplacedEcuadorZones()) {
+    logger.warn(
+      `Dry run: would delete country-level Ecuador zones on another stock location. ${idLog}. Set FIX_EC_ZONES=true to delete them.`
+    )
+    return
   }
 
-  await deleteServiceZonesWorkflow(container).run({
-    input: { ids: zoneIds },
-  })
-  logger.info(
-    "Removed Ecuador service zones that were attached to another stock location."
-  )
+  try {
+    if (optionIds.length) {
+      await deleteShippingOptionsWorkflow(container).run({
+        input: { ids: optionIds },
+      })
+    }
+
+    await deleteServiceZonesWorkflow(container).run({
+      input: { ids: zoneIds },
+    })
+    logger.info(`Deleted misplaced Ecuador zones. ${idLog}.`)
+  } catch (error) {
+    logger.warn(
+      `Zone cleanup failed. Restoring Ecuador shipping if needed. ${idLog}.`
+    )
+    await input.restoreShipping()
+    throw error
+  }
 }
 
 async function ensureShippingOption(

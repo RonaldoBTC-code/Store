@@ -1,8 +1,12 @@
 import fs from "fs"
 import path from "path"
 import { MedusaError } from "@medusajs/framework/utils"
-import { assertSeedAllowed } from "../assert-seed-allowed"
-import { shouldDeleteMisplacedEcuadorZones } from "../ecuador-zone-cleanup"
+import { assertSeedAllowed, isProductionNodeEnv } from "../assert-seed-allowed"
+import {
+  ecuadorReplacementIsReady,
+  isCountryLevelEcuadorZone,
+  shouldDeleteMisplacedEcuadorZones,
+} from "../ecuador-zone-cleanup"
 
 const readSource = (relativePath: string) =>
   fs.readFileSync(path.join(__dirname, relativePath), "utf8")
@@ -27,6 +31,32 @@ describe("assertSeedAllowed", () => {
     expect(() =>
       assertSeedAllowed({ NODE_ENV: "production", ALLOW_PROD_SEED: "true" })
     ).not.toThrow()
+  })
+
+  it("treats prod and any casing of production as production", () => {
+    for (const nodeEnv of ["prod", "PROD", "Production", " production "]) {
+      expect(isProductionNodeEnv(nodeEnv)).toBe(true)
+      expect(() => assertSeedAllowed({ NODE_ENV: nodeEnv })).toThrow(
+        /NODE_ENV=production/
+      )
+    }
+  })
+
+  it("uses the database host as the primary check", () => {
+    const databaseUrl = "postgres://app:s3cret@db.example.com:5432/store"
+
+    expect(() =>
+      assertSeedAllowed({ NODE_ENV: "Production", DATABASE_URL: databaseUrl })
+    ).toThrow(/database host is non-local/)
+
+    try {
+      assertSeedAllowed({ NODE_ENV: "Production", DATABASE_URL: databaseUrl })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      expect(message).not.toContain("NODE_ENV")
+      expect(message).not.toContain(databaseUrl)
+      expect(message).not.toContain("s3cret")
+    }
   })
 
   it("allows non-production without the opt-in", () => {
@@ -123,5 +153,76 @@ describe("shouldDeleteMisplacedEcuadorZones", () => {
     expect(shouldDeleteMisplacedEcuadorZones({ FIX_EC_ZONES: "true" })).toBe(
       true
     )
+  })
+})
+
+describe("isCountryLevelEcuadorZone", () => {
+  it("matches a single country zone for ec", () => {
+    expect(
+      isCountryLevelEcuadorZone({
+        geo_zones: [{ type: "country", country_code: "ec" }],
+      })
+    ).toBe(true)
+  })
+
+  it("does not match province, city, or postal zones that use ec", () => {
+    expect(
+      isCountryLevelEcuadorZone({
+        geo_zones: [
+          { type: "province", country_code: "ec", province_code: "P" },
+        ],
+      })
+    ).toBe(false)
+    expect(
+      isCountryLevelEcuadorZone({
+        geo_zones: [{ type: "city", country_code: "ec", city: "Quito" }],
+      })
+    ).toBe(false)
+    expect(
+      isCountryLevelEcuadorZone({
+        geo_zones: [
+          { type: "zip", country_code: "ec", postal_expression: { zip: "170150" } },
+        ],
+      })
+    ).toBe(false)
+    expect(
+      isCountryLevelEcuadorZone({
+        geo_zones: [{ country_code: "ec" }],
+      })
+    ).toBe(false)
+  })
+
+  it("does not match a zone that covers more than Ecuador", () => {
+    expect(
+      isCountryLevelEcuadorZone({
+        geo_zones: [
+          { type: "country", country_code: "ec" },
+          { type: "country", country_code: "co" },
+        ],
+      })
+    ).toBe(false)
+  })
+})
+
+describe("ecuadorReplacementIsReady", () => {
+  it("requires the country zone and a shipping option before deletion", () => {
+    expect(
+      ecuadorReplacementIsReady({
+        hasCountryZone: true,
+        shippingOptionIds: ["so_1"],
+      })
+    ).toBe(true)
+    expect(
+      ecuadorReplacementIsReady({
+        hasCountryZone: true,
+        shippingOptionIds: [],
+      })
+    ).toBe(false)
+    expect(
+      ecuadorReplacementIsReady({
+        hasCountryZone: false,
+        shippingOptionIds: ["so_1"],
+      })
+    ).toBe(false)
   })
 })
