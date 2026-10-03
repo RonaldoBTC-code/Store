@@ -87,8 +87,11 @@ pnpm migrate            # schema + fresh Ecuador store seed
 pnpm seed:ec            # safe to re-run: USD, region ec, IVA 15%, shipping
 # FIX_EC_ZONES and FIX_EC_SHIPPING_PROFILE apply only when setup runs:
 # pnpm seed:ec, or the first migrate before initial-data-seed.ts has finished_at.
+# Remove them from the environment as soon as the fix has been applied.
+# If left set, the next seed:ec or a recreated database deletes zones or moves
+# shipping options again without anyone asking.
 # Setting a flag and deploying applies nothing after that script_migrations row is finished.
-# In production, setup warns while either flag is still true.
+# In production, setup logs that same warning while either flag is still true.
 # If that script's preflight blocks, finished_at stays unset and migrate keeps failing.
 # Fix the conflict the error names, then run pnpm migrate again.
 # Medusa serializes migration scripts with pg_try_advisory_lock.
