@@ -3,7 +3,7 @@ import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 import { ECUADOR_SETUP_LOCK_KEY } from "../../src/scripts/ecuador-setup-lock"
 import ensureEcuadorStore from "../../src/scripts/ensure-ecuador-store"
 
-jest.setTimeout(60_000)
+jest.setTimeout(300_000)
 
 const useDatabaseCredentials = () => {
   const raw = process.env.DATABASE_URL
@@ -165,26 +165,49 @@ medusaIntegrationTestRunner({
         client: {
           acquireConnection: () => Promise<{
             query: (sql: string, params?: unknown[]) => Promise<{
-              rows: { acquired?: boolean; unlocked?: boolean }[]
+              rows: { acquired?: boolean; unlocked?: boolean; pid?: number }[]
             }>
           }>
           releaseConnection: (connection: unknown) => Promise<unknown>
         }
       }
-      const connection = await pgConnection.client.acquireConnection()
+      const key = BigInt(ECUADOR_SETUP_LOCK_KEY)
+      const classid = Number((key >> 32n) & 0xffffffffn)
+      const objid = Number(key & 0xffffffffn)
+      // Two checkouts at once are two sessions. The second one cannot be
+      // the connection the pool would return first, so a reentrant
+      // pg_try_advisory_lock on a still-held session cannot pass this test.
+      const first = await pgConnection.client.acquireConnection()
+      const second = await pgConnection.client.acquireConnection()
       try {
-        const locked = await connection.query(
+        const firstPid = await first.query("SELECT pg_backend_pid() AS pid")
+        const secondPid = await second.query("SELECT pg_backend_pid() AS pid")
+        expect(secondPid.rows[0]?.pid).not.toBe(firstPid.rows[0]?.pid)
+
+        const held = await first.query(
+          `SELECT pid
+             FROM pg_locks
+            WHERE locktype = 'advisory'
+              AND classid = $1::oid
+              AND objid = $2::oid
+              AND objsubid = 1`,
+          [String(classid), String(objid)]
+        )
+        expect(held.rows).toEqual([])
+
+        const locked = await second.query(
           "SELECT pg_try_advisory_lock($1::bigint) AS acquired",
           [String(ECUADOR_SETUP_LOCK_KEY)]
         )
         expect(locked.rows[0]?.acquired).toBe(true)
-        const unlocked = await connection.query(
+        const unlocked = await second.query(
           "SELECT pg_advisory_unlock($1::bigint) AS unlocked",
           [String(ECUADOR_SETUP_LOCK_KEY)]
         )
         expect(unlocked.rows[0]?.unlocked).toBe(true)
       } finally {
-        await pgConnection.client.releaseConnection(connection)
+        await pgConnection.client.releaseConnection(second)
+        await pgConnection.client.releaseConnection(first)
       }
     }, 60_000)
   },

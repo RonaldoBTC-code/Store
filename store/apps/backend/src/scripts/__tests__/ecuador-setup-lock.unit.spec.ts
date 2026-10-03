@@ -56,12 +56,13 @@ describe("withEcuadorSetupLock", () => {
     })
     let time = 0
     const sleeps: number[] = []
+    const run = jest.fn(async () => undefined)
 
     let caught: unknown
     try {
       await withEcuadorSetupLock(
         containerFor({ acquireConnection, releaseConnection }),
-        async () => undefined,
+        run,
         {
           now: () => time,
           sleep: async (ms) => {
@@ -77,6 +78,7 @@ describe("withEcuadorSetupLock", () => {
     expect(caught).toBeInstanceOf(MedusaError)
     const message = caught instanceof Error ? caught.message : String(caught)
     expect(message).toBe(BUSY_MESSAGE)
+    expect(run).not.toHaveBeenCalled()
     expect(message).not.toContain(databaseUrl)
     expect(message).not.toContain("s3cret")
     expect(message).not.toContain("db.example.com")
@@ -164,7 +166,13 @@ describe("withEcuadorSetupLock", () => {
     )
 
     expect(connection.__knex__disposed).toBe(true)
+    expect(destroyRawConnection).toHaveBeenCalledTimes(1)
     expect(destroyRawConnection).toHaveBeenCalledWith(connection)
+    expect(releaseConnection).toHaveBeenCalledTimes(1)
+    expect(releaseConnection).toHaveBeenCalledWith(connection)
+    expect(destroyRawConnection.mock.invocationCallOrder[0]).toBeLessThan(
+      releaseConnection.mock.invocationCallOrder[0]
+    )
     expect(connection.query).toHaveBeenCalledWith(UNLOCK_SQL, [
       String(ECUADOR_SETUP_LOCK_KEY),
     ])
@@ -177,5 +185,8 @@ describe("withEcuadorSetupLock", () => {
     )
     expect(source).not.toContain("new Client")
     expect(source).not.toContain("rejectUnauthorized")
+    expect(source).not.toContain('from "pg"')
+    expect(source).not.toContain('require("pg")')
+    expect(source).not.toContain("ssl:")
   })
 })
