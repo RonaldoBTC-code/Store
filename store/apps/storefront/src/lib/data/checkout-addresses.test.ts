@@ -1,0 +1,132 @@
+import { describe, expect, it } from "vitest"
+import { CONSUMIDOR_FINAL_TAX_ID } from "../util/ec-tax-id"
+import { checkoutAddressesFromForm } from "./checkout-addresses"
+
+function form(fields: Record<string, string>, sameAsBilling = true): FormData {
+  const data = new FormData()
+
+  for (const [key, value] of Object.entries(fields)) {
+    data.set(key, value)
+  }
+
+  if (sameAsBilling) {
+    data.set("same_as_billing", "on")
+  }
+
+  return data
+}
+
+const shipping = {
+  "shipping_address.first_name": "Ana",
+  "shipping_address.last_name": "Perez",
+  "shipping_address.address_1": "Av. Amazonas",
+  "shipping_address.city": "Quito",
+  "shipping_address.country_code": "ec",
+  "shipping_address.province": "Pichincha",
+  "shipping_address.phone": " 0991234567 ",
+  email: "ana@example.com",
+  "billing_address.tax_id_type": "cedula",
+  "billing_address.tax_id": "1710034065",
+}
+
+describe("checkoutAddressesFromForm", () => {
+  it("requires a phone, leaves postal code empty, and stores the tax id on billing only", () => {
+    const update = checkoutAddressesFromForm(form(shipping))
+    const billing = update.billing_address
+
+    expect(update.shipping_address).toMatchObject({
+      phone: "0991234567",
+      postal_code: null,
+      city: "Quito",
+    })
+    expect(update.shipping_address).not.toHaveProperty("metadata")
+    expect(billing).toMatchObject({
+      phone: "0991234567",
+      postal_code: null,
+      metadata: {
+        tax_id: "1710034065",
+        tax_id_type: "cedula",
+      },
+    })
+  })
+
+  it("keeps a provided postal code and a separate billing phone", () => {
+    const update = checkoutAddressesFromForm(
+      form(
+        {
+          ...shipping,
+          "shipping_address.postal_code": "170150",
+          "billing_address.first_name": "Luis",
+          "billing_address.last_name": "Vega",
+          "billing_address.address_1": "Calle Larga",
+          "billing_address.city": "Cuenca",
+          "billing_address.country_code": "ec",
+          "billing_address.phone": "0987654321",
+          "billing_address.tax_id_type": "ruc",
+          "billing_address.tax_id": "1790085783001",
+        },
+        false
+      )
+    )
+
+    expect(update.shipping_address).toMatchObject({ postal_code: "170150" })
+    expect(update.billing_address).toMatchObject({
+      first_name: "Luis",
+      phone: "0987654321",
+      city: "Cuenca",
+      metadata: {
+        tax_id: "1790085783001",
+        tax_id_type: "ruc",
+      },
+    })
+  })
+
+  it("stores consumidor final without a personal number", () => {
+    const update = checkoutAddressesFromForm(
+      form({
+        ...shipping,
+        "billing_address.tax_id_type": "consumidor_final",
+        "billing_address.tax_id": "",
+      })
+    )
+
+    expect(update.billing_address).toMatchObject({
+      metadata: {
+        tax_id_type: "consumidor_final",
+        tax_id: CONSUMIDOR_FINAL_TAX_ID,
+      },
+    })
+  })
+
+  it("rejects a missing phone and an invalid cédula without returning the number", () => {
+    expect(() =>
+      checkoutAddressesFromForm(
+        form({
+          ...shipping,
+          "shipping_address.phone": "   ",
+        })
+      )
+    ).toThrow("Shipping phone is required.")
+
+    const invalid = "0000000000"
+    expect(() =>
+      checkoutAddressesFromForm(
+        form({
+          ...shipping,
+          "billing_address.tax_id": invalid,
+        })
+      )
+    ).toThrow("Enter a valid cédula (10 digits).")
+
+    try {
+      checkoutAddressesFromForm(
+        form({
+          ...shipping,
+          "billing_address.tax_id": invalid,
+        })
+      )
+    } catch (error) {
+      expect((error as Error).message.includes(invalid)).toBe(false)
+    }
+  })
+})
