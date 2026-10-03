@@ -1,15 +1,24 @@
 import path from "path"
 import { moduleIntegrationTestRunner } from "@medusajs/test-utils"
 import { MedusaError } from "@medusajs/framework/utils"
-import type { PayphoneHttpClient } from "../../payphone/client"
-import { retryPayphoneReversals } from "../../../jobs/payphone-reverse"
-import { fulfillPayphoneSale } from "../../payphone/fulfill"
-import { PAYPHONE_PROVIDER_ID } from "../../payphone/providers"
-import { settlePayphonePayment } from "../../payphone/settle"
-import { PayphoneResultCode } from "../../payphone/service"
-import { PAYPHONE_CLAIM_MODULE } from "../index"
-import PayphoneClaim from "../models/payphone-claim"
-import PayphoneClaimModuleService from "../service"
+import { retryPayphoneReversals } from "../../src/jobs/payphone-reverse"
+import {
+  PayphoneApiError,
+  type PayphoneHttpClient,
+} from "../../src/modules/payphone/client"
+import { fulfillPayphoneSale } from "../../src/modules/payphone/fulfill"
+import { PAYPHONE_PROVIDER_ID } from "../../src/modules/payphone/providers"
+import { PROCESSING_GRACE_SECONDS } from "../../src/modules/payphone/reverse-window"
+import { PayphoneResultCode } from "../../src/modules/payphone/service"
+import { settlePayphonePayment } from "../../src/modules/payphone/settle"
+import {
+  ALLOWED_CLAIM_TRANSITIONS,
+  PAYPHONE_CLAIM_STATUSES,
+  isAllowedClaimTransition,
+} from "../../src/modules/payphone-claim/claim-transitions"
+import { PAYPHONE_CLAIM_MODULE } from "../../src/modules/payphone-claim"
+import PayphoneClaim from "../../src/modules/payphone-claim/models/payphone-claim"
+import PayphoneClaimModuleService from "../../src/modules/payphone-claim/service"
 
 jest.setTimeout(120_000)
 
@@ -20,7 +29,10 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
   moduleName: PAYPHONE_CLAIM_MODULE,
   moduleModels: [PayphoneClaim],
   resolve: "./src/modules/payphone-claim",
-  pathToMigrations: path.join(__dirname, "../migrations"),
+  pathToMigrations: path.join(
+    __dirname,
+    "../../src/modules/payphone-claim/migrations"
+  ),
   testSuite: ({ service, MikroOrmWrapper }) => {
     describe("PayPhone claim concurrency", () => {
       it("lets one of two simultaneous confirms create the order", async () => {
@@ -156,7 +168,9 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
 
         expect(sale.confirms()).toBe(1)
         expect(sale.completes()).toBe(1)
-        expect(orders.length).toBeGreaterThan(0)
+        expect(sale.payments()).toEqual([
+          { orderId: "order_01RACE", transactionId: "82" },
+        ])
         expect(new Set(orders.map((result) => result.orderId))).toEqual(
           new Set(["order_01RACE"])
         )
@@ -165,7 +179,11 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
           client_transaction_id: "payses_82",
         })
         expect(claims).toHaveLength(1)
-        expect(claims[0]).toMatchObject({ status: "captured" })
+        expect(claims[0]).toMatchObject({
+          status: "captured",
+          order_id: "order_01RACE",
+          transaction_id: "82",
+        })
         expect(sale.confirms()).toBe(1)
       })
 
@@ -389,7 +407,7 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
             service.captureFromReversing(id, orderId),
           findOrderId: async () => null,
           reverse: (transactionId: number) => client.reverse(transactionId),
-          graceSeconds: 0,
+          graceSeconds: PROCESSING_GRACE_SECONDS,
         }
         await retryPayphoneReversals(deps)
         await retryPayphoneReversals(deps)
@@ -401,7 +419,7 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
         expect(done?.status).toBe("reversed")
       })
 
-      it("captures once when the order outlasts the processing grace", async () => {
+      it("captures once when the order lands after the processing grace", async () => {
         const created = await service.ensurePending({
           clientTransactionId: "payses_slow",
           cartId: "cart_slow",
@@ -423,8 +441,270 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
         )
 
         let reverses = 0
+        let orderId: string | null = null
+        let releaseOrder: () => void = () => undefined
+        const orderReady = new Promise<void>((resolve) => {
+          releaseOrder = resolve
+        })
+        let jobLooking: () => void = () => undefined
+        const looking = new Promise<void>((resolve) => {
+          jobLooking = resolve
+        })
+
+        const job = retryPayphoneReversals({
+          graceSeconds: PROCESSING_GRACE_SECONDS,
+          listProcessingPastGrace: (seconds: number) =>
+            service.listProcessingPastGrace(seconds),
+          listNeedsReversal: () => service.listNeedsReversal(),
+          listStaleReversing: (seconds: number) =>
+            service.listStaleReversing(seconds),
+          markNeedsReversal: (id: string, transactionId: string) =>
+            service.markNeedsReversal(id, transactionId),
+          claimReversal: (id: string) => service.claimReversal(id),
+          markReversed: (id: string) => service.markReversed(id),
+          releaseReversal: (id: string) => service.releaseReversal(id),
+          captureFromReversing: (id: string, foundOrderId: string) =>
+            service.captureFromReversing(id, foundOrderId),
+          findOrderId: async () => {
+            jobLooking()
+            await orderReady
+            return orderId
+          },
+          reverse: async () => {
+            reverses += 1
+          },
+        })
+        const order = (async () => {
+          await looking
+          orderId = "order_slow"
+          releaseOrder()
+          await service.markCaptured("payses_slow", "90", "order_slow")
+        })()
+
+        await Promise.all([job, order])
+
+        expect(reverses).toBe(0)
+        const claims = await service.listPayphoneClaims({
+          client_transaction_id: "payses_slow",
+        })
+        expect(claims).toHaveLength(1)
+        expect(claims[0]).toMatchObject({
+          status: "captured",
+          order_id: "order_slow",
+          transaction_id: "90",
+        })
+      })
+
+      it("does not reject the claim when confirm hits a network or timeout error", async () => {
+        for (const [sessionId, message] of [
+          ["payses_net", "network"],
+          ["payses_timeout", "timeout"],
+        ] as const) {
+          await expect(
+            settlePayphonePayment(
+              {
+                claims: service,
+                client: {
+                  prepare: async () => {
+                    throw new MedusaError(
+                      MedusaError.Types.UNEXPECTED_STATE,
+                      "prepare is not part of settle"
+                    )
+                  },
+                  confirm: async () => {
+                    throw new PayphoneApiError(
+                      `No se pudo contactar a PayPhone (${message}).`,
+                      502
+                    )
+                  },
+                  reverse: async () => undefined,
+                },
+                loadCart: async () => usdCart(sessionId.replace("payses", "cart")),
+                complete: async () => ({ orderId: "order_should_not" }),
+              },
+              {
+                sessionCartId: sessionId.replace("payses", "cart"),
+                sessionId,
+                currencyCode: "usd",
+                initiatedAmountCents: 3499,
+                payphoneTransactionId: sessionId === "payses_net" ? 86 : 87,
+                sessionData: { amount_cents: 3499 },
+              }
+            )
+          ).rejects.toThrow(PayphoneResultCode.failed)
+
+          const [claim] = await service.listPayphoneClaims({
+            client_transaction_id: sessionId,
+          })
+          expect(claim?.status).toBe("processing")
+          expect(claim?.status).not.toBe("rejected")
+          expect(claim?.order_id ?? null).toBeNull()
+        }
+      })
+
+      it("does not advance the claim when confirm returns a forged id", async () => {
+        await expect(
+          settlePayphonePayment(
+            {
+              claims: service,
+              client: {
+                prepare: async () => {
+                  throw new MedusaError(
+                    MedusaError.Types.UNEXPECTED_STATE,
+                    "prepare is not part of settle"
+                  )
+                },
+                confirm: async () => ({
+                  amount: 3499,
+                  clientTransactionId: "payses_ATTACKER",
+                  statusCode: 3,
+                  transactionStatus: "Approved",
+                  transactionId: 88,
+                  currency: "USD",
+                }),
+                reverse: async () => undefined,
+              },
+              loadCart: async () => usdCart("cart_forged_id"),
+              complete: async () => ({ orderId: "order_should_not" }),
+            },
+            {
+              sessionCartId: "cart_forged_id",
+              sessionId: "payses_forged_id",
+              currencyCode: "usd",
+              initiatedAmountCents: 3499,
+              payphoneTransactionId: 88,
+              sessionData: { amount_cents: 3499 },
+            }
+          )
+        ).rejects.toThrow(PayphoneResultCode.client)
+
+        const [claim] = await service.listPayphoneClaims({
+          client_transaction_id: "payses_forged_id",
+        })
+        expect(claim).toMatchObject({
+          status: "pending",
+          transaction_id: null,
+          order_id: null,
+        })
+        expect([
+          "processing",
+          "captured",
+          "rejected",
+          "needs_reversal",
+          "reversing",
+          "reversed",
+        ]).not.toContain(claim?.status)
+      })
+
+      it("leaves every forbidden status pair unchanged", async () => {
+        const created = await service.ensurePending({
+          clientTransactionId: "payses_pairs",
+          cartId: "cart_pairs",
+          amountCents: 3499,
+          currencyCode: "usd",
+        })
+        if (!/^[\w]+$/.test(created.id)) {
+          throw new Error("unexpected claim id")
+        }
+
+        const attempts: {
+          to: (typeof PAYPHONE_CLAIM_STATUSES)[number]
+          run: () => Promise<unknown>
+        }[] = [
+          {
+            to: "processing",
+            run: () => service.claimProcessing(created.id),
+          },
+          {
+            to: "pending",
+            run: () => service.releaseProcessing(created.id),
+          },
+          {
+            to: "rejected",
+            run: () => service.markRejected(created.id),
+          },
+          {
+            to: "captured",
+            run: () => service.markCaptured("payses_pairs", "910", "order_x"),
+          },
+          {
+            to: "captured",
+            run: () => service.captureFromReversing(created.id, "order_x"),
+          },
+          {
+            to: "needs_reversal",
+            run: () => service.markNeedsReversal(created.id, "910"),
+          },
+          {
+            to: "needs_reversal",
+            run: () => service.releaseReversal(created.id),
+          },
+          {
+            to: "reversing",
+            run: () => service.claimReversal(created.id),
+          },
+          {
+            to: "reversed",
+            run: () => service.markReversed(created.id),
+          },
+        ]
+        const forbidden: string[] = []
+
+        for (const from of PAYPHONE_CLAIM_STATUSES) {
+          for (const attempt of attempts) {
+            if (isAllowedClaimTransition(from, attempt.to)) {
+              continue
+            }
+
+            forbidden.push(`${from}->${attempt.to}`)
+            await MikroOrmWrapper.getManager().execute(
+              `update "payphone_claim" set "status" = '${from}', "transaction_id" = '910', "order_id" = null where "id" = '${created.id}'`
+            )
+            await attempt.run()
+
+            const [row] = await service.listPayphoneClaims({ id: created.id })
+            expect(row).toMatchObject({
+              status: from,
+              transaction_id: "910",
+              order_id: null,
+            })
+          }
+        }
+
+        expect(forbidden).toHaveLength(50)
+        expect(new Set(forbidden)).toEqual(
+          new Set(
+            PAYPHONE_CLAIM_STATUSES.flatMap((from) =>
+              attempts
+                .filter((attempt) => !isAllowedClaimTransition(from, attempt.to))
+                .map((attempt) => `${from}->${attempt.to}`)
+            )
+          )
+        )
+      })
+
+      it("reverses once when two jobs run in parallel", async () => {
+        const created = await service.ensurePending({
+          clientTransactionId: "payses_parallel_job",
+          cartId: "cart_parallel_job",
+          amountCents: 3499,
+          currencyCode: "usd",
+        })
+        expect(await service.claimProcessing(created.id)).toMatchObject({
+          status: "processing",
+        })
+        expect(await service.attachTransactionId(created.id, "91")).toBe(
+          "attached"
+        )
+        expect(await service.markNeedsReversal(created.id, "91")).toMatchObject({
+          status: "needs_reversal",
+        })
+
+        let reverses = 0
+        let active = 0
+        let maxActive = 0
         const deps = {
-          graceSeconds: 10 * 60,
+          graceSeconds: PROCESSING_GRACE_SECONDS,
           listProcessingPastGrace: (seconds: number) =>
             service.listProcessingPastGrace(seconds),
           listNeedsReversal: () => service.listNeedsReversal(),
@@ -437,34 +717,49 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
           releaseReversal: (id: string) => service.releaseReversal(id),
           captureFromReversing: (id: string, orderId: string) =>
             service.captureFromReversing(id, orderId),
-          findOrderId: async () => "order_slow",
+          findOrderId: async () => null,
           reverse: async () => {
+            active += 1
+            maxActive = Math.max(maxActive, active)
+            await new Promise((resolve) => setTimeout(resolve, 40))
+            active -= 1
             reverses += 1
           },
         }
-        await retryPayphoneReversals(deps)
-        await retryPayphoneReversals(deps)
 
-        expect(reverses).toBe(0)
+        await Promise.all([
+          retryPayphoneReversals(deps),
+          retryPayphoneReversals(deps),
+        ])
+
+        expect(reverses).toBe(1)
+        expect(maxActive).toBe(1)
         const [row] = await service.listPayphoneClaims({ id: created.id })
         expect(row).toMatchObject({
-          status: "captured",
-          order_id: "order_slow",
-          transaction_id: "90",
+          status: "reversed",
+          transaction_id: "91",
         })
-        const claims = await service.listPayphoneClaims({
-          client_transaction_id: "payses_slow",
-        })
-        expect(claims).toHaveLength(1)
       })
     })
   },
 })
 
+function usdCart(id: string) {
+  return {
+    id,
+    currencyCode: "usd",
+    total: "34.99",
+    taxTotal: "4.56",
+    shippingTotal: 0,
+    shippingTaxTotal: 0,
+  }
+}
+
 function saleHarness(service: PayphoneClaimModuleService, transactionId: number) {
   let confirms = 0
   let completes = 0
   let orderId: string | null = null
+  const payments: { orderId: string; transactionId: string }[] = []
   const sessionId = `payses_${transactionId}`
   const createdOrderId =
     transactionId === 81 ? "order_01WEBHOOK" : "order_01RACE"
@@ -524,6 +819,10 @@ function saleHarness(service: PayphoneClaimModuleService, transactionId: number)
               complete: async () => {
                 completes += 1
                 orderId = createdOrderId
+                payments.push({
+                  orderId: createdOrderId,
+                  transactionId: String(transactionId),
+                })
                 return { orderId: createdOrderId }
               },
             },
@@ -550,5 +849,6 @@ function saleHarness(service: PayphoneClaimModuleService, transactionId: number)
     fulfill,
     confirms: () => confirms,
     completes: () => completes,
+    payments: () => payments,
   }
 }

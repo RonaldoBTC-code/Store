@@ -54,7 +54,7 @@ export const PostPayphoneCompleteSchema = z.object({
   cart_id: z.string().trim().min(1).max(100).optional(),
 })
 
-async function blockManualPaymentSession(
+export async function blockManualPaymentSession(
   req: MedusaRequest,
   res: MedusaResponse,
   next: MedusaNextFunction
@@ -77,7 +77,7 @@ async function blockManualPaymentSession(
   next()
 }
 
-async function blockManualPaymentCompletion(
+export async function blockManualPaymentCompletion(
   req: MedusaRequest,
   res: MedusaResponse,
   next: MedusaNextFunction

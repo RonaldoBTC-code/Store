@@ -5,6 +5,12 @@ import {
 } from "../client"
 
 describe("PayphoneClient", () => {
+  it("fails closed when a test calls the real fetch", () => {
+    expect(() =>
+      fetch(`${PAYPHONE_API_BASE}/api/button/V2/Confirm`)
+    ).toThrow(/not allowed in tests/i)
+  })
+
   it("posts Prepare, Confirm, and Reverse through the injected fetch", async () => {
     const calls: { url: string; body: unknown; authorization: string }[] = []
     const fetchImpl = jest.fn(async (url: string, init?: RequestInit) => {

@@ -4,7 +4,11 @@ import { applyClaimTransition } from "../../payphone-claim/claim-transitions"
 import type { PayphoneClaimRecord } from "../../payphone-claim/service"
 import { PayphoneResultCode } from "../service"
 import { settlePayphonePayment, type PayphoneClaimStore } from "../settle"
-import type { PayphoneHttpClient, PayphoneTransaction } from "../client"
+import {
+  PayphoneApiError,
+  type PayphoneHttpClient,
+  type PayphoneTransaction,
+} from "../client"
 
 const SESSION = "payses_01SETTLE"
 const CART = "cart_01SETTLE"
@@ -168,6 +172,7 @@ function harness(options: {
   complete?: () => Promise<{ orderId: string }>
   reverse?: (transactionId: number) => Promise<void>
   completeTimeoutMs?: number
+  confirmError?: unknown
 } = {}) {
   const claims = memoryClaims()
   const confirmCalls: unknown[] = []
@@ -183,6 +188,10 @@ function harness(options: {
     },
     confirm: async () => {
       confirmCalls.push(true)
+      if (options.confirmError) {
+        throw options.confirmError
+      }
+
       return options.payphone === undefined ? approved() : options.payphone!
     },
     reverse: async (transactionId) => {
@@ -367,6 +376,35 @@ describe("settlePayphonePayment", () => {
     await expect(run()).rejects.toThrow(PayphoneResultCode.failed)
     expect(reverseCalls).toEqual([])
     expect(statusOf(claims)).toBe("needs_reversal")
+  })
+
+  it("does not reject the claim when confirm hits a network or timeout error", async () => {
+    for (const confirmError of [
+      new PayphoneApiError("No se pudo contactar a PayPhone (network).", 502),
+      new PayphoneApiError("No se pudo contactar a PayPhone (timeout).", 502),
+    ]) {
+      const { run, claims, completes } = harness({ confirmError })
+
+      await expect(run()).rejects.toThrow(PayphoneResultCode.failed)
+      expect(completes()).toBe(0)
+      expect(statusOf(claims)).toBe("processing")
+      expect(statusOf(claims)).not.toBe("rejected")
+    }
+  })
+
+  it("does not advance the claim when confirm returns a forged id", async () => {
+    const { run, claims, completes } = harness({
+      payphone: approved({ clientTransactionId: "payses_FORGED" }),
+    })
+
+    await expect(run()).rejects.toThrow(PayphoneResultCode.client)
+    expect(completes()).toBe(0)
+    expect(statusOf(claims)).toBe("pending")
+    expect(claims.rows.values().next().value).toMatchObject({
+      status: "pending",
+      transactionId: null,
+      orderId: null,
+    })
   })
 
   it("reverses when the cart total changed after payment started", async () => {
