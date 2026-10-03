@@ -27,6 +27,7 @@ import {
 import { assertSeedAllowed } from "./assert-seed-allowed"
 
 const ECUADOR_LOCATION_NAME = "Ecuador"
+const SALES_CHANNEL_NAME = "Default Sales Channel"
 
 type IdRecord = { id: string }
 
@@ -109,11 +110,11 @@ export default async function seedCapProducts({ container }: ExecArgs) {
   })
   const salesChannel = (
     (channels ?? []) as { id: string; name?: string | null }[]
-  )[0]
+  ).find((channel) => channel.name === SALES_CHANNEL_NAME)
   if (!salesChannel) {
     throw new MedusaError(
       MedusaError.Types.NOT_FOUND,
-      "No sales channel found. Run pnpm seed:ec first."
+      `Sales channel "${SALES_CHANNEL_NAME}" not found. Run pnpm seed:ec before pnpm seed:caps.`
     )
   }
 
@@ -121,13 +122,13 @@ export default async function seedCapProducts({ container }: ExecArgs) {
     entity: "shipping_profile",
     fields: ["id", "type"],
   })
-  const profilesList = (profiles ?? []) as { id: string; type?: string | null }[]
-  const shippingProfile =
-    profilesList.find((profile) => profile.type === "default") ?? profilesList[0]
+  const shippingProfile = (
+    (profiles ?? []) as { id: string; type?: string | null }[]
+  ).find((profile) => profile.type === "default")
   if (!shippingProfile) {
     throw new MedusaError(
       MedusaError.Types.NOT_FOUND,
-      "No shipping profile found. Run pnpm seed:ec first."
+      "No shipping profile with type default found. Run pnpm seed:ec before pnpm seed:caps."
     )
   }
 

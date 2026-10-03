@@ -1,5 +1,7 @@
 export const SYSTEM_PAYMENT_PROVIDER_ID = "pp_system_default"
 export const ECUADOR_STOCK_LOCATION_NAME = "Ecuador"
+export const ECUADOR_FULFILLMENT_SET_NAME = "Envíos Ecuador"
+export const ECUADOR_COUNTRY_CODE = "ec"
 
 export type StoreCurrency = {
   currency_code?: string | null
@@ -22,8 +24,18 @@ export type TaxRateShape = {
 }
 
 export type IvaPlan =
-  | { action: "noop"; reason: string }
-  | { action: "add"; isDefault: boolean }
+  | { action: "noop"; reason: string; warning?: string }
+  | { action: "add"; isDefault: boolean; warning?: string }
+
+export type RegionCountryPlan =
+  | { action: "keep" }
+  | { action: "add"; countries: string[] }
+  | { action: "stop"; message: string }
+
+export type FulfillmentSetChoice = {
+  name?: string | null
+  type?: string | null
+}
 
 /**
  * Returns pp_system_default only when the region has no payment providers.
@@ -70,6 +82,23 @@ export function planStoreCurrencies(currencies: StoreCurrency[]): CurrencyPlan {
  * A default tax rate that is already set is not replaced. IVA 15% is added
  * beside it when missing. IVA becomes the default only on an empty tax region.
  */
+const defaultIvaWarning = (rate: TaxRateShape | undefined) => {
+  if (!rate?.is_default) {
+    return undefined
+  }
+  if ((rate.code ?? "").toUpperCase() !== "IVA") {
+    return undefined
+  }
+  if (Number(rate.rate) === 15) {
+    return undefined
+  }
+  const shown =
+    rate.rate == null || Number.isNaN(Number(rate.rate))
+      ? "unset"
+      : `${Number(rate.rate)}%`
+  return `Default IVA rate is ${shown}, not 15%. Leaving that default unchanged.`
+}
+
 export function planIva(rates: TaxRateShape[]): IvaPlan {
   const defaultRate = rates.find((rate) => rate.is_default)
   const hasIva = rates.some(
@@ -77,6 +106,7 @@ export function planIva(rates: TaxRateShape[]): IvaPlan {
       (rate.code ?? "").toUpperCase() === "IVA" && Number(rate.rate) === 15
   )
   const defaultLabel = defaultRate?.code || defaultRate?.id || "existing"
+  const warning = defaultIvaWarning(defaultRate)
 
   if (hasIva) {
     return {
@@ -84,14 +114,74 @@ export function planIva(rates: TaxRateShape[]): IvaPlan {
       reason: defaultRate
         ? `default tax rate ${defaultLabel}`
         : "IVA 15%",
+      ...(warning ? { warning } : {}),
     }
   }
 
   if (defaultRate || rates.length) {
-    return { action: "add", isDefault: false }
+    return {
+      action: "add",
+      isDefault: false,
+      ...(warning ? { warning } : {}),
+    }
   }
 
   return { action: "add", isDefault: true }
+}
+
+/**
+ * An existing region keeps its name and currency. Country ec is added only
+ * when this region does not already have it and no other region does either.
+ */
+export function planRegionCountries(input: {
+  regionId: string
+  regionName?: string | null
+  countryCodes: string[]
+  otherRegions: {
+    id: string
+    name?: string | null
+    countryCodes: string[]
+  }[]
+  countryCode?: string
+}): RegionCountryPlan {
+  const countryCode = (input.countryCode ?? ECUADOR_COUNTRY_CODE).toLowerCase()
+  const codes = input.countryCodes
+    .map((code) => code.toLowerCase())
+    .filter((code) => Boolean(code))
+
+  if (codes.includes(countryCode)) {
+    return { action: "keep" }
+  }
+
+  const holder = input.otherRegions.find((region) =>
+    region.countryCodes.some((code) => code.toLowerCase() === countryCode)
+  )
+  if (holder) {
+    return {
+      action: "stop",
+      message: `Country ${countryCode} is already on region "${holder.name ?? holder.id}" (${holder.id}). Refusing to attach it to "${input.regionName ?? input.regionId}" (${input.regionId}).`,
+    }
+  }
+
+  return { action: "add", countries: [...codes, countryCode] }
+}
+
+/**
+ * A new Ecuador service zone goes on the shipping set named Envíos Ecuador,
+ * or otherwise on a set whose type is shipping. Pickup sets are never used.
+ */
+export function chooseShippingFulfillmentSet<T extends FulfillmentSetChoice>(
+  sets: T[],
+  name = ECUADOR_FULFILLMENT_SET_NAME
+): T | null {
+  const candidates = sets.filter(
+    (set) => (set.type ?? "").toLowerCase() !== "pickup"
+  )
+  return (
+    candidates.find((set) => set.name === name) ??
+    candidates.find((set) => (set.type ?? "").toLowerCase() === "shipping") ??
+    null
+  )
 }
 
 export function namedStockLocation<T extends { name?: string | null }>(

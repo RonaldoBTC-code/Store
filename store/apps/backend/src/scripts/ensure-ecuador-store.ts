@@ -10,9 +10,11 @@ import {
   shouldDeleteMisplacedEcuadorZones,
 } from "./ecuador-zone-cleanup"
 import {
+  chooseShippingFulfillmentSet,
   namedStockLocation,
   paymentProvidersForRegion,
   planIva,
+  planRegionCountries,
   planStoreCurrencies,
   SYSTEM_PAYMENT_PROVIDER_ID,
 } from "./ecuador-store-policy"
@@ -135,6 +137,7 @@ type ServiceZoneRecord = {
 type FulfillmentSetRecord = {
   id: string
   name?: string | null
+  type?: string | null
   service_zones?: ServiceZoneRecord[] | null
 }
 
@@ -195,8 +198,11 @@ const isDuplicateLinkError = (error: unknown) => {
  * base store. Product and demo seeding stay gated separately.
  *
  * On a database that already has store defaults, currencies, or a default
- * tax rate, those values are left in place. pp_system_default is added only
- * when the Ecuador region has no payment provider yet.
+ * tax rate, those values are left in place. An existing region keeps its
+ * name and currency. Country ec is added when that region does not have it
+ * and no other region does. pp_system_default is added only when the Ecuador
+ * region has no payment provider yet. A default IVA rate other than 15% is
+ * left in place and logged.
  *
  * Zone cleanup creates the Ecuador shipping option first, then deletes.
  * Those are separate workflows, so this is not one transaction. A failed
@@ -517,29 +523,43 @@ async function ensureRegion(
   }
 
   const codes = countryCodesOf(existing)
-  const dedicated = codes.length === 1 && codes[0] === COUNTRY_CODE
-  if (!dedicated) {
-    logger.warn(
-      `Country ${COUNTRY_CODE} is on region "${existing.name}" together with other countries. Leaving that region unchanged.`
-    )
-    return existing
+  const countryPlan = planRegionCountries({
+    regionId: existing.id,
+    regionName: existing.name,
+    countryCodes: codes,
+    otherRegions: regions
+      .filter((region) => region.id !== existing.id)
+      .map((region) => ({
+        id: region.id,
+        name: region.name,
+        countryCodes: countryCodesOf(region),
+      })),
+    countryCode: COUNTRY_CODE,
+  })
+
+  if (countryPlan.action === "stop") {
+    throw new MedusaError(MedusaError.Types.NOT_ALLOWED, countryPlan.message)
   }
 
   const providerIds = (existing.payment_providers ?? [])
     .map((provider) => provider.id)
     .filter((id): id is string => Boolean(id))
   const update: {
-    name?: string
-    currency_code?: string
+    countries?: string[]
     payment_providers?: string[]
   } = {}
 
-  if (existing.name !== REGION_NAME) {
-    update.name = REGION_NAME
+  if (countryPlan.action === "add") {
+    update.countries = countryPlan.countries
+    logger.info(
+      `Adding country ${COUNTRY_CODE} to region "${existing.name}" (${existing.id}) without renaming it or changing its currency.`
+    )
+  } else if (codes.length !== 1) {
+    logger.info(
+      `Region "${existing.name}" (${existing.id}) already includes country ${COUNTRY_CODE} along with other countries. Leaving its name, currency, and countries unchanged.`
+    )
   }
-  if (existing.currency_code?.toLowerCase() !== CURRENCY_CODE) {
-    update.currency_code = CURRENCY_CODE
-  }
+
   const providers = paymentProvidersForRegion(providerIds)
   if (providers) {
     update.payment_providers = providers
@@ -567,7 +587,7 @@ async function ensureRegion(
 async function ensureIva(
   container: MedusaContainer,
   query: { graph: Function },
-  logger: { info: (message: string) => void }
+  logger: { info: (message: string) => void; warn: (message: string) => void }
 ) {
   const { data } = await query.graph({
     entity: "tax_region",
@@ -606,6 +626,10 @@ async function ensureIva(
 
   const rates = existing.tax_rates ?? []
   const ivaPlan = planIva(rates)
+
+  if (ivaPlan.warning) {
+    logger.warn(ivaPlan.warning)
+  }
 
   if (ivaPlan.action === "noop") {
     logger.info(`Leaving the existing ${ivaPlan.reason} unchanged.`)
@@ -791,7 +815,12 @@ async function ensureFulfillment(
     .find((zone) => isCountryLevelEcuadorZone(zone))
 
   if (!serviceZone) {
-    const fulfillmentSet = sets[0]
+    const fulfillmentSet = chooseShippingFulfillmentSet(sets)
+    if (!fulfillmentSet && sets.length) {
+      logger.info(
+        "No shipping fulfillment set named Envíos Ecuador. Creating one instead of using a pickup set."
+      )
+    }
     if (fulfillmentSet) {
       const { result } = await createServiceZonesWorkflow(container).run({
         input: {
@@ -861,6 +890,7 @@ async function findEcuadorLocation(query: { graph: Function }) {
       "fulfillment_providers.id",
       "fulfillment_sets.id",
       "fulfillment_sets.name",
+      "fulfillment_sets.type",
       "fulfillment_sets.service_zones.id",
       "fulfillment_sets.service_zones.name",
       "fulfillment_sets.service_zones.geo_zones.type",

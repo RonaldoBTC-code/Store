@@ -15,9 +15,11 @@ const PRODUCTION_NODE_ENVS = new Set(["production", "prod"])
  * Base store setup used by `medusa db:migrate` does not call this.
  *
  * The database host is the primary check. Only localhost, 127.0.0.1, and
- * ::1 are local. A missing or empty DATABASE_URL is not local. NODE_ENV is
- * also refused when it normalizes to production or prod. Errors never
- * include the connection string.
+ * ::1 are local. The host is the URL authority, never a `host` query
+ * parameter or an `@` that appears only in the query string. A missing or
+ * empty DATABASE_URL is not local. NODE_ENV is also refused when it
+ * normalizes to production or prod. Errors never include the connection
+ * string.
  */
 export function assertSeedAllowed(env: SeedEnv = process.env) {
   if (env.ALLOW_PROD_SEED === "true") {
@@ -60,21 +62,19 @@ export function databaseHostIsLocal(databaseUrl: string | undefined) {
 }
 
 function readDatabaseHost(databaseUrl: string) {
-  const trimmed = databaseUrl.trim()
-  const at = trimmed.lastIndexOf("@")
-  const authority =
-    at >= 0
-      ? trimmed.slice(at + 1)
-      : trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
-
-  if (authority.startsWith("[")) {
-    const end = authority.indexOf("]")
-    if (end > 1) {
-      return authority.slice(1, end)
-    }
+  let parsed: URL
+  try {
+    parsed = new URL(databaseUrl.trim())
+  } catch {
     return null
   }
 
-  const host = authority.split("/")[0]?.split(":")[0]?.trim()
+  for (const key of parsed.searchParams.keys()) {
+    if (key.toLowerCase() === "host") {
+      return null
+    }
+  }
+
+  const host = parsed.hostname.replace(/^\[|\]$/g, "").trim()
   return host || null
 }

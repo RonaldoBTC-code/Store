@@ -1,17 +1,52 @@
-import fs from "fs"
-import path from "path"
+import type { MedusaContainer } from "@medusajs/framework/types"
 import { MedusaError } from "@medusajs/framework/utils"
 import { assertSeedAllowed, isProductionNodeEnv } from "../assert-seed-allowed"
+import addEcRegion from "../add-ec-region"
+import ensureEcuadorStore from "../ensure-ecuador-store"
+import seedCapProducts from "../seed-cap-products"
+import syncGatoGangCatalog from "../sync-gato-gang-catalog"
+import initialDataSeed from "../../migration-scripts/initial-data-seed"
 import {
   ecuadorReplacementIsReady,
   isCountryLevelEcuadorZone,
   shouldDeleteMisplacedEcuadorZones,
 } from "../ecuador-zone-cleanup"
 
-const readSource = (relativePath: string) =>
-  fs.readFileSync(path.join(__dirname, relativePath), "utf8")
-
 const LOCAL_DATABASE_URL = "postgres://medusa:medusa@127.0.0.1:5432/store"
+
+const withProcessEnv = async (
+  overrides: {
+    NODE_ENV?: string
+    DATABASE_URL?: string
+    ALLOW_PROD_SEED?: string
+  },
+  run: () => Promise<void>
+) => {
+  const keys = ["NODE_ENV", "DATABASE_URL", "ALLOW_PROD_SEED"] as const
+  const previous = new Map(keys.map((key) => [key, process.env[key]]))
+  try {
+    for (const key of keys) {
+      if (key in overrides) {
+        const value = overrides[key]
+        if (value === undefined) {
+          delete process.env[key]
+        } else {
+          process.env[key] = value
+        }
+      }
+    }
+    await run()
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key)
+      if (value === undefined) {
+        delete process.env[key]
+      } else {
+        process.env[key] = value
+      }
+    }
+  }
+}
 
 describe("assertSeedAllowed", () => {
   it("refuses production when ALLOW_PROD_SEED is unset", () => {
@@ -97,17 +132,57 @@ describe("assertSeedAllowed", () => {
     }
   })
 
+  it("does not treat a blank or staging NODE_ENV as production", () => {
+    for (const nodeEnv of ["", "  ", "staging"]) {
+      expect(isProductionNodeEnv(nodeEnv)).toBe(false)
+      expect(() =>
+        assertSeedAllowed({
+          NODE_ENV: nodeEnv,
+          DATABASE_URL: LOCAL_DATABASE_URL,
+        })
+      ).not.toThrow()
+    }
+  })
+
   it("refuses a missing or empty DATABASE_URL", () => {
     expect(() => assertSeedAllowed({ NODE_ENV: "development" })).toThrow(
       /database host is non-local/
     )
     expect(() => assertSeedAllowed({})).toThrow(/database host is non-local/)
     expect(() =>
+      assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: "" })
+    ).toThrow(/database host is non-local/)
+    expect(() =>
       assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: "   " })
     ).toThrow(/database host is non-local/)
     expect(() =>
       assertSeedAllowed({ ALLOW_PROD_SEED: "true" })
     ).not.toThrow()
+  })
+
+  it("does not treat a host query param or @localhost in the query as local", () => {
+    const urls = [
+      "postgres://medusa:medusa@db.example.com:5432/store?host=localhost",
+      "postgres://medusa:medusa@db.example.com:5432/store?host=",
+      "postgres://medusa:medusa@localhost:5432/store?host=127.0.0.1",
+      "postgres://app:s3cret@db.example.com:5432/store?x=@localhost",
+      "postgres://app:s3cret@evil.example/db?redirect=@localhost",
+    ]
+
+    for (const databaseUrl of urls) {
+      expect(() =>
+        assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: databaseUrl })
+      ).toThrow(/database host is non-local/)
+
+      try {
+        assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: databaseUrl })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        expect(message).not.toContain(databaseUrl)
+        expect(message).not.toContain("s3cret")
+        expect(message).not.toContain("@localhost")
+      }
+    }
   })
 
   it("refuses the postgres hostname unless ALLOW_PROD_SEED=true", () => {
@@ -177,22 +252,48 @@ describe("assertSeedAllowed", () => {
 })
 
 describe("base store setup guard", () => {
-  it("keeps migrate and Ecuador setup free of the product seed guard", () => {
-    const sources = [
-      readSource("../ensure-ecuador-store.ts"),
-      readSource("../../migration-scripts/initial-data-seed.ts"),
-      readSource("../add-ec-region.ts"),
-    ]
+  const container = {
+    resolve() {
+      throw new Error("container resolved")
+    },
+  } as unknown as MedusaContainer
 
-    for (const source of sources) {
-      expect(source).not.toContain("assertSeedAllowed")
-    }
+  it("runs migrate and Ecuador setup without the product seed guard", async () => {
+    await withProcessEnv(
+      {
+        NODE_ENV: "production",
+        DATABASE_URL: "postgres://app:s3cret@db.example.com:5432/store",
+        ALLOW_PROD_SEED: undefined,
+      },
+      async () => {
+        await expect(ensureEcuadorStore({ container })).rejects.toThrow(
+          "container resolved"
+        )
+        await expect(initialDataSeed({ container })).rejects.toThrow(
+          "container resolved"
+        )
+        await expect(addEcRegion({ container, args: [] })).rejects.toThrow(
+          "container resolved"
+        )
+      }
+    )
   })
 
-  it("keeps the guard on cap seeding and catalog sync", () => {
-    expect(readSource("../seed-cap-products.ts")).toContain("assertSeedAllowed()")
-    expect(readSource("../sync-gato-gang-catalog.ts")).toContain(
-      "assertSeedAllowed()"
+  it("runs the product seed guard before cap seeding or catalog sync", async () => {
+    await withProcessEnv(
+      {
+        NODE_ENV: "production",
+        DATABASE_URL: LOCAL_DATABASE_URL,
+        ALLOW_PROD_SEED: undefined,
+      },
+      async () => {
+        await expect(seedCapProducts({ container, args: [] })).rejects.toThrow(
+          /NODE_ENV=production/
+        )
+        await expect(
+          syncGatoGangCatalog({ container, args: [] })
+        ).rejects.toThrow(/NODE_ENV=production/)
+      }
     )
   })
 })
