@@ -269,7 +269,7 @@ async function supersedeReplacedInvoice(
 async function loadLimitRows(tx: SqlTx, input: AcquireInput): Promise<PaymentRecord[]> {
   const rows = await tx.query(
     `SELECT "id", "provider", "status", "cart_id", "customer_id", "payment_session_hash",
-            "invoice_id", "ip_hash", "unit_count", "created_at", "expires_at"
+            "invoice_id", "ip_hash", "unit_count", "amount_cents", "created_at", "expires_at"
      FROM "btcpay_payment"
      WHERE "deleted_at" IS NULL
        AND "provider" = ?
@@ -303,6 +303,7 @@ function mapLimitRow(row: Record<string, unknown>): PaymentRecord {
     invoiceId: row.invoice_id == null ? null : String(row.invoice_id),
     ipHash: row.ip_hash == null ? null : String(row.ip_hash),
     unitCount: Number(row.unit_count ?? 0),
+    amountCents: Number(row.amount_cents ?? 0),
     createdAt: asDate(row.created_at),
     expiresAt: asDate(row.expires_at),
     reservationIds: [],

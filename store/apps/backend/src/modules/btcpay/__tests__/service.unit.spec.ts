@@ -1,8 +1,13 @@
 import { createHmac } from "crypto"
 import { MedusaError, PaymentActions } from "@medusajs/framework/utils"
-import { BtcpayClient, BtcpayInvoice } from "../client"
+import { BtcpayClient, BtcpayHttpClient, BtcpayInvoice } from "../client"
 import { claimOnce, MemoryBtcpayClaimStore } from "../claim"
-import { BTCPAY_PENDING_LIMIT, PENDING_LIMIT_MESSAGE } from "../limits"
+import {
+  BTCPAY_PENDING_LIMIT,
+  hashSessionId,
+  PENDING_LIMIT_MESSAGE,
+  resolveLimits,
+} from "../limits"
 import { MemoryBtcpayPaymentStore } from "../payment-store"
 import BtcpayPaymentProviderService from "../service"
 import { StockReserver } from "../stock"
@@ -49,6 +54,7 @@ function provider(
   extra: {
     paymentStore?: MemoryBtcpayPaymentStore
     stock?: StockReserver
+    logger?: { warn(message: string): void }
     limits?: {
       maxPendingPerCart?: number
       maxPendingPerSession?: number
@@ -61,6 +67,7 @@ function provider(
 ) {
   return new BtcpayPaymentProviderService(
     {
+      logger: extra.logger,
       client,
       claimStore,
       paymentStore: extra.paymentStore,
@@ -79,6 +86,57 @@ function provider(
 
 function sign(body: string, secret = SECRET) {
   return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`
+}
+
+function bindingSecret() {
+  const dedicated = process.env.BTCPAY_PII_HMAC_SECRET?.trim()
+  return dedicated || SECRET
+}
+
+async function seedPayment(store: MemoryBtcpayPaymentStore) {
+  const acquired = await store.tryAcquire({
+    cartId: "cart_1",
+    paymentSessionId: hashSessionId("payses_1", bindingSecret()) ?? "",
+    customerId: null,
+    ipHash: null,
+    units: 1,
+    amountCents: 1000,
+    now: new Date("2026-01-01T00:00:00.000Z"),
+    limits: resolveLimits({
+      maxPendingPerSession: 5,
+      maxPendingPerCustomer: 5,
+      maxNewInvoicesPerIp: 5,
+      maxUnitsPerPendingOrder: 5,
+    }),
+  })
+  if (!acquired.ok) {
+    throw new Error("seed failed")
+  }
+  await store.commitInvoice({
+    id: acquired.id,
+    invoiceId: "inv123",
+    expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+    reservationIds: [],
+  })
+  return store
+}
+
+async function ready(
+  client: BtcpayClient,
+  extra: {
+    stock?: StockReserver
+    logger?: { warn(message: string): void }
+    claimStore?: MemoryBtcpayClaimStore
+  } = {}
+) {
+  const payments = new MemoryBtcpayPaymentStore()
+  await seedPayment(payments)
+  const service = provider(client, extra.claimStore ?? new MemoryBtcpayClaimStore(), {
+    paymentStore: payments,
+    stock: extra.stock,
+    logger: extra.logger,
+  })
+  return { service, payments }
 }
 
 function webhook(
@@ -127,7 +185,7 @@ describe("BTCPay payment provider", () => {
   it("authorizes only a settled invoice and captures it in Medusa", async () => {
     const client = mockClient()
     client.getInvoice.mockResolvedValue(invoice())
-    const service = provider(client)
+    const { service } = await ready(client)
 
     const authorized = await service.authorizePayment({ data: sessionData() })
     const action = await webhook(service, {
@@ -145,14 +203,22 @@ describe("BTCPay payment provider", () => {
     expect(client.getInvoice).toHaveBeenCalledWith("inv123")
   })
 
-  it("authorizes settled overpaid invoices for the original USD total", async () => {
+  it("does not authorize a settled overpaid invoice", async () => {
     const client = mockClient()
     client.getInvoice.mockResolvedValue(invoice({ additionalStatus: "PaidOver" }))
-    const service = provider(client)
+    const stock = stockRecorder()
+    const warnings: string[] = []
+    const { service } = await ready(client, {
+      stock,
+      logger: { warn: (message) => warnings.push(message) },
+    })
 
-    const authorized = await service.authorizePayment({ data: sessionData() })
+    await expect(service.authorizePayment({ data: sessionData() })).rejects.toThrow(
+      /cannot be authorized/
+    )
 
-    expect(authorized.status).toBe("captured")
+    expect(warnings).toEqual(["BTCPay confirmation rejected: paid_over"])
+    expect(stock.release).not.toHaveBeenCalled()
   })
 
   it("does not authorize an expired invoice", async () => {
@@ -160,7 +226,7 @@ describe("BTCPay payment provider", () => {
     client.getInvoice.mockResolvedValue(
       invoice({ status: "Expired", additionalStatus: "None" })
     )
-    const service = provider(client)
+    const { service } = await ready(client)
 
     await expect(
       service.authorizePayment({ data: sessionData() })
@@ -179,7 +245,7 @@ describe("BTCPay payment provider", () => {
     client.getInvoice.mockResolvedValue(
       invoice({ status: "Invalid", additionalStatus: "Invalid" })
     )
-    const service = provider(client)
+    const { service } = await ready(client)
 
     await expect(
       service.authorizePayment({ data: sessionData() })
@@ -198,11 +264,11 @@ describe("BTCPay payment provider", () => {
     client.getInvoice.mockResolvedValue(
       invoice({ status: "Processing", additionalStatus: "PaidPartial" })
     )
-    const service = provider(client)
+    const { service } = await ready(client)
 
     await expect(
       service.authorizePayment({ data: sessionData() })
-    ).rejects.toBeInstanceOf(MedusaError)
+    ).rejects.toThrow(/cannot be authorized/)
     const action = await webhook(service, {
       type: "InvoiceReceivedPayment",
       invoiceId: "inv123",
@@ -217,7 +283,7 @@ describe("BTCPay payment provider", () => {
     client.getInvoice.mockResolvedValue(
       invoice({ status: "Processing", additionalStatus: "None" })
     )
-    const service = provider(client)
+    const { service } = await ready(client)
 
     const pending = await service.authorizePayment({ data: sessionData() })
     const action = await webhook(service, {
@@ -232,7 +298,8 @@ describe("BTCPay payment provider", () => {
 
   it("rejects a forged webhook signature before reading the invoice", async () => {
     const client = mockClient()
-    const service = provider(client)
+    const { service, payments } = await ready(client)
+    const findByInvoice = jest.spyOn(payments, "findByInvoice")
     const body = {
       type: "InvoiceSettled",
       invoiceId: "inv123",
@@ -243,12 +310,13 @@ describe("BTCPay payment provider", () => {
 
     expect(action.action).toBe(PaymentActions.NOT_SUPPORTED)
     expect(client.getInvoice).not.toHaveBeenCalled()
+    expect(findByInvoice).not.toHaveBeenCalled()
   })
 
   it("rejects a replayed webhook confirmation", async () => {
     const client = mockClient()
     client.getInvoice.mockResolvedValue(invoice())
-    const service = provider(client)
+    const { service } = await ready(client)
     const body = {
       type: "InvoiceSettled",
       invoiceId: "inv123",
@@ -273,7 +341,7 @@ describe("BTCPay payment provider", () => {
   it("lets only one of two concurrent confirmations authorize", async () => {
     const client = mockClient()
     client.getInvoice.mockResolvedValue(invoice())
-    const service = provider(client)
+    const { service } = await ready(client)
 
     const results = await Promise.allSettled([
       service.authorizePayment({ data: sessionData() }),
@@ -289,20 +357,50 @@ describe("BTCPay payment provider", () => {
     expect(rejected).toHaveLength(1)
   })
 
-  it("rejects an amount or currency mismatch and an invoice for another cart", async () => {
+  it("does not authorize a settled invoice when the amount does not match the stored row", async () => {
     const client = mockClient()
-    const service = provider(client)
-
+    const warnings: string[] = []
+    const { service } = await ready(client, {
+      logger: { warn: (message) => warnings.push(message) },
+    })
     client.getInvoice.mockResolvedValue(invoice({ amount: "10.01" }))
-    await expect(
-      service.authorizePayment({ data: sessionData() })
-    ).rejects.toThrow(/amount does not match/)
 
-    client.getInvoice.mockResolvedValue(invoice({ currency: "EUR" }))
-    await expect(
-      service.authorizePayment({ data: sessionData() })
-    ).rejects.toThrow(/not USD/)
+    const message = await rejectionOf(service.authorizePayment({ data: sessionData() }))
 
+    expect(message).toBe("BTCPay invoice does not match the stored payment.")
+    expect(warnings).toEqual(["BTCPay confirmation rejected: amount_mismatch"])
+    expect(secretFree(`${message}\n${warnings.join("\n")}`)).toBe(true)
+    const action = await webhook(service, {
+      type: "InvoiceSettled",
+      invoiceId: "inv123",
+      storeId: "store123",
+    })
+    expect(action.action).toBe(PaymentActions.FAILED)
+  })
+
+  it("does not authorize when the invoice store id does not match", async () => {
+    const client = mockClient()
+    const warnings: string[] = []
+    const { service } = await ready(client, {
+      logger: { warn: (message) => warnings.push(message) },
+    })
+    client.getInvoice.mockResolvedValue(invoice({ storeId: "store999" }))
+
+    const message = await rejectionOf(service.authorizePayment({ data: sessionData() }))
+
+    expect(message).toBe("BTCPay invoice does not match the stored payment.")
+    expect(warnings).toEqual(["BTCPay confirmation rejected: store_mismatch"])
+    expect(secretFree(`${message}\n${warnings.join("\n")}`)).toBe(true)
+    expect(message).not.toContain("store999")
+    expect(warnings.join(" ")).not.toContain("store999")
+  })
+
+  it("does not authorize when the invoice cart id does not match the stored row", async () => {
+    const client = mockClient()
+    const warnings: string[] = []
+    const { service } = await ready(client, {
+      logger: { warn: (message) => warnings.push(message) },
+    })
     client.getInvoice.mockResolvedValue(
       invoice({
         metadata: {
@@ -313,19 +411,68 @@ describe("BTCPay payment provider", () => {
         },
       })
     )
-    await expect(
-      service.authorizePayment({ data: sessionData() })
-    ).rejects.toThrow(/different cart/)
 
-    client.getInvoice.mockResolvedValue(
-      invoice({ amount: "10.01", metadata: { ...invoice().metadata, amountCents: 1000 } })
-    )
-    const action = await webhook(service, {
-      type: "InvoiceSettled",
-      invoiceId: "inv123",
-      storeId: "store123",
+    const message = await rejectionOf(service.authorizePayment({ data: sessionData() }))
+
+    expect(message).toBe("BTCPay invoice does not match the stored payment.")
+    expect(warnings).toEqual(["BTCPay confirmation rejected: cart_mismatch"])
+    expect(secretFree(`${message}\n${warnings.join("\n")}`)).toBe(true)
+    expect(`${message} ${warnings.join(" ")}`).not.toContain("cart_2")
+  })
+
+  it("does not authorize a currency mismatch", async () => {
+    const client = mockClient()
+    const warnings: string[] = []
+    const { service } = await ready(client, {
+      logger: { warn: (message) => warnings.push(message) },
     })
-    expect(action.action).toBe(PaymentActions.FAILED)
+    client.getInvoice.mockResolvedValue(invoice({ currency: "EUR" }))
+
+    const message = await rejectionOf(service.authorizePayment({ data: sessionData() }))
+
+    expect(message).toBe("BTCPay invoice does not match the stored payment.")
+    expect(warnings).toEqual(["BTCPay confirmation rejected: currency_mismatch"])
+    expect(message).not.toContain("EUR")
+  })
+
+  it("does not include the API key or webhook secret on error paths", async () => {
+    const client = mockClient()
+    client.refundInvoice.mockRejectedValue(
+      new Error(`refund failed token test-key and ${SECRET}`)
+    )
+    const warnings: string[] = []
+    const { service } = await ready(client, {
+      logger: { warn: (message) => warnings.push(message) },
+    })
+
+    const message = await rejectionOf(
+      service.refundPayment({ data: sessionData(), amount: "4.50" })
+    )
+
+    expect(message).toContain("[redacted]")
+    expect(secretFree(`${message}\n${warnings.join("\n")}`)).toBe(true)
+
+    const previousWebhookSecret = process.env.BTCPAY_WEBHOOK_SECRET
+    process.env.BTCPAY_WEBHOOK_SECRET = SECRET
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
+      new Response(`unauthorized token test-key ${SECRET}`, { status: 401 })
+    )
+    const http = new BtcpayHttpClient({
+      url: ORIGIN,
+      storeId: "store123",
+      apiKey: "test-key",
+    })
+    const httpMessage = await rejectionOf(http.getInvoice("inv123"))
+    fetchMock.mockRestore()
+    if (previousWebhookSecret == null) {
+      delete process.env.BTCPAY_WEBHOOK_SECRET
+    } else {
+      process.env.BTCPAY_WEBHOOK_SECRET = previousWebhookSecret
+    }
+
+    expect(httpMessage).not.toContain("test-key")
+    expect(httpMessage).toContain("[redacted]")
+    expect(httpMessage).not.toContain("store123")
   })
 
   it("maps a database unique violation to a replay", async () => {
@@ -504,6 +651,26 @@ describe("BTCPay payment provider", () => {
     )
   })
 })
+
+async function rejectionOf(promise: Promise<unknown>): Promise<string> {
+  try {
+    await promise
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+  throw new Error("expected the call to fail")
+}
+
+function secretFree(text: string): boolean {
+  return (
+    !text.includes("test-key") &&
+    !text.includes(SECRET) &&
+    !text.includes("10.01") &&
+    !text.includes("1001") &&
+    !text.includes("cart_1") &&
+    !text.includes("store123")
+  )
+}
 
 function stockRecorder(): StockReserver {
   return {

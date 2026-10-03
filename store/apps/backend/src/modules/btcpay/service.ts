@@ -17,7 +17,6 @@ import type {
   GetPaymentStatusOutput,
   InitiatePaymentInput,
   InitiatePaymentOutput,
-  Logger,
   ProviderWebhookPayload,
   RefundPaymentInput,
   RefundPaymentOutput,
@@ -35,7 +34,7 @@ import {
 import { BtcpayClaimStore } from "./claim"
 import { getBtcpayClaimStore } from "./claim-registry"
 import { CartSnapshotReader, getCartSnapshotReader } from "./cart-snapshot"
-import { judgeInvoice } from "./invoice-decision"
+import { judgeInvoice, paymentBindingCode } from "./invoice-decision"
 import {
   BTCPAY_PENDING_LIMIT,
   DEFAULT_INVOICE_TTL_MS,
@@ -69,7 +68,7 @@ type WarnLogger = {
 }
 
 type InjectedDependencies = {
-  logger?: Logger
+  logger?: WarnLogger
   client?: BtcpayClient
   claimStore?: BtcpayClaimStore
   paymentStore?: BtcpayPaymentStore
@@ -192,9 +191,8 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
     input: AuthorizePaymentInput
   ): Promise<AuthorizePaymentOutput> {
     const session = requireSession(input.data)
-    const invoice = await this.client_.getInvoice(session.invoice_id)
-    this.assertBinding(invoice, session)
-    const verdict = judgeInvoice(invoice)
+    const invoice = await this.loadInvoice(session.invoice_id)
+    const verdict = await this.confirmation(invoice, session)
 
     if (verdict.outcome === "pending") {
       return {
@@ -204,8 +202,11 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
     }
 
     if (verdict.outcome === "reject") {
-      await this.releaseHold(session.invoice_id, closedStatus(invoice.status))
-      throw new MedusaError(MedusaError.Types.NOT_ALLOWED, verdict.reason)
+      await this.releaseIfTerminal(invoice, verdict.code)
+      throw new MedusaError(
+        MedusaError.Types.NOT_ALLOWED,
+        rejectionMessage(verdict.code)
+      )
     }
 
     const claim = await this.claims().claim({
@@ -239,13 +240,12 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
     input: CapturePaymentInput
   ): Promise<CapturePaymentOutput> {
     const session = requireSession(input.data)
-    const invoice = await this.client_.getInvoice(session.invoice_id)
-    this.assertBinding(invoice, session)
-    const verdict = judgeInvoice(invoice)
+    const invoice = await this.loadInvoice(session.invoice_id)
+    const verdict = await this.confirmation(invoice, session)
     if (verdict.outcome !== "authorize") {
       throw new MedusaError(
         MedusaError.Types.NOT_ALLOWED,
-        `BTCPay capture only records an invoice BTCPay has already settled. ${verdict.reason}`
+        "BTCPay capture only records an invoice BTCPay has already settled."
       )
     }
     return {
@@ -284,7 +284,7 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
       throw new MedusaError(
         MedusaError.Types.NOT_ALLOWED,
         "BTCPay refunds are pull payments. The customer claims the refund from a link; this store does not push bitcoin. " +
-          detail
+          this.redactSecrets(detail)
       )
     }
 
@@ -367,9 +367,8 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
     input: GetPaymentStatusInput
   ): Promise<GetPaymentStatusOutput> {
     const session = requireSession(input.data)
-    const invoice = await this.client_.getInvoice(session.invoice_id)
-    this.assertBinding(invoice, session)
-    const verdict = judgeInvoice(invoice)
+    const invoice = await this.loadInvoice(session.invoice_id)
+    const verdict = await this.confirmation(invoice, session)
     const status =
       verdict.outcome === "authorize"
         ? PaymentSessionStatus.CAPTURED
@@ -395,7 +394,7 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
       rawBody == null ||
       !verifyBtcpaySignature(rawBody, signature, this.config_.webhookSecret)
     ) {
-      this.logger_.warn("Rejected a BTCPay webhook with an invalid signature.")
+      this.logger_.warn("BTCPay confirmation rejected: invalid_signature")
       return unsupported()
     }
 
@@ -406,53 +405,21 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
       return unsupported()
     }
     if (eventStoreId && eventStoreId !== this.config_.storeId) {
-      this.logger_.warn("Rejected a BTCPay webhook for a different store.")
+      this.logger_.warn("BTCPay confirmation rejected: store_mismatch")
       return unsupported()
     }
 
-    let invoice: BtcpayInvoice
-    try {
-      invoice = await this.client_.getInvoice(invoiceId)
-    } catch (error) {
-      this.logger_.warn(
-        `BTCPay webhook could not re-fetch invoice ${invoiceId}.`
-      )
-      throw error
-    }
-
+    const invoice = await this.loadInvoice(invoiceId)
+    const verdict = await this.confirmation(invoice, null)
     const sessionId = stringValue(invoice.metadata.paymentSessionId)
-    const cartId = stringValue(invoice.metadata.cartId) || stringValue(invoice.metadata.orderId)
     const amountCents = majorToCents(invoice.amount)
-    const metadataCents = numberValue(invoice.metadata.amountCents)
-
-    if (
-      !sessionId ||
-      !cartId ||
-      amountCents == null ||
-      invoice.storeId !== this.config_.storeId ||
-      invoice.currency.toUpperCase() !== "USD" ||
-      metadataCents == null ||
-      metadataCents !== amountCents
-    ) {
-      return {
-        action: PaymentActions.FAILED,
-        data: {
-          session_id: sessionId,
-          amount: amountCents == null ? 0 : Number(centsToDecimal(amountCents)),
-        },
-      }
-    }
-
-    const verdict = judgeInvoice(invoice)
-    if (verdict.outcome !== "authorize") {
-      if (verdict.outcome === "reject") {
-        await this.releaseHold(invoice.id, closedStatus(invoice.status))
+    if (verdict.outcome === "authorize") {
+      if (amountCents == null) {
+        this.logger_.warn("BTCPay confirmation rejected: amount_mismatch")
+        return failedAction()
       }
       return {
-        action:
-          verdict.outcome === "pending"
-            ? PaymentActions.NOT_SUPPORTED
-            : PaymentActions.FAILED,
+        action: PaymentActions.AUTHORIZED,
         data: {
           session_id: sessionId,
           amount: Number(centsToDecimal(amountCents)),
@@ -460,13 +427,12 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
       }
     }
 
-    return {
-      action: PaymentActions.AUTHORIZED,
-      data: {
-        session_id: sessionId,
-        amount: Number(centsToDecimal(amountCents)),
-      },
+    if (verdict.outcome === "reject") {
+      await this.releaseIfTerminal(invoice, verdict.code)
+      return failedAction()
     }
+
+    return unsupported()
   }
 
   private async openInvoice(
@@ -573,41 +539,76 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
     }
   }
 
-  private assertBinding(invoice: BtcpayInvoice, session: SessionData) {
-    if (!invoice.storeId || invoice.storeId !== this.config_.storeId) {
+  private async loadInvoice(invoiceId: string): Promise<BtcpayInvoice> {
+    try {
+      return await this.client_.getInvoice(invoiceId)
+    } catch {
+      this.logger_.warn("BTCPay confirmation rejected: invoice_fetch_failed")
       throw new MedusaError(
-        MedusaError.Types.INVALID_DATA,
-        "BTCPay invoice belongs to a different store."
+        MedusaError.Types.UNEXPECTED_STATE,
+        "BTCPay invoice could not be confirmed."
       )
     }
-    if (invoice.currency.toUpperCase() !== "USD") {
-      throw new MedusaError(
-        MedusaError.Types.INVALID_DATA,
-        `BTCPay invoice currency ${invoice.currency || "unknown"} is not USD.`
-      )
+  }
+
+  /**
+   * Authorize only when the re-fetched invoice matches the btcpay_payment row:
+   * store id, integer cents, USD, and cart id. PaidLate and PaidOver stay in
+   * manual review and do not release the hold.
+   */
+  private async confirmation(
+    invoice: BtcpayInvoice,
+    session: SessionData | null
+  ) {
+    const row = await this.payments().findByInvoice(invoice.id)
+    const code = paymentBindingCode({
+      invoiceStoreId: invoice.storeId,
+      expectedStoreId: this.config_.storeId,
+      invoiceCurrency: invoice.currency,
+      invoiceAmountCents: majorToCents(invoice.amount),
+      invoiceCartId:
+        stringValue(invoice.metadata.cartId) || stringValue(invoice.metadata.orderId),
+      row: row
+        ? { cartId: row.cartId, amountCents: row.amountCents }
+        : null,
+    })
+    if (code) {
+      this.logger_.warn(`BTCPay confirmation rejected: ${code}`)
+      return { outcome: "reject" as const, code }
     }
-    const invoiceCents = majorToCents(invoice.amount)
-    if (invoiceCents == null || invoiceCents !== session.amount_cents) {
-      throw new MedusaError(
-        MedusaError.Types.INVALID_DATA,
-        "BTCPay invoice amount does not match the cart total."
-      )
+    const metaSession = stringValue(invoice.metadata.paymentSessionId)
+    const metaHash = hashSessionId(metaSession, this.personalSecret())
+    if (
+      !row?.paymentSessionHash ||
+      !metaHash ||
+      metaHash !== row.paymentSessionHash ||
+      (session != null && metaSession !== session.payment_session_id)
+    ) {
+      this.logger_.warn("BTCPay confirmation rejected: session_mismatch")
+      return { outcome: "reject" as const, code: "session_mismatch" }
     }
-    const cartId =
-      stringValue(invoice.metadata.cartId) || stringValue(invoice.metadata.orderId)
-    if (cartId !== session.cart_id) {
-      throw new MedusaError(
-        MedusaError.Types.INVALID_DATA,
-        "BTCPay invoice belongs to a different cart."
-      )
+    const verdict = judgeInvoice(invoice)
+    if (verdict.outcome === "reject") {
+      this.logger_.warn(`BTCPay confirmation rejected: ${verdict.code}`)
     }
-    const paymentSessionId = stringValue(invoice.metadata.paymentSessionId)
-    if (paymentSessionId !== session.payment_session_id) {
-      throw new MedusaError(
-        MedusaError.Types.INVALID_DATA,
-        "BTCPay invoice belongs to a different payment session."
-      )
+    return verdict
+  }
+
+  private async releaseIfTerminal(invoice: BtcpayInvoice, code: string) {
+    if (code !== "expired" && code !== "invalid" && code !== "partial") {
+      return
     }
+    await this.releaseHold(invoice.id, closedStatus(invoice.status))
+  }
+
+  private redactSecrets(text: string): string {
+    let redacted = text
+    for (const secret of [this.config_.apiKey, this.config_.webhookSecret]) {
+      if (secret) {
+        redacted = redacted.split(secret).join("[redacted]")
+      }
+    }
+    return redacted
   }
 
   private async voidUnpaidInvoice(invoiceId: string) {
@@ -617,9 +618,7 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
         await this.client_.markInvoiceInvalid(invoiceId)
       }
     } catch {
-      this.logger_.warn(
-        `Could not invalidate unpaid BTCPay invoice ${invoiceId}.`
-      )
+      this.logger_.warn("BTCPay confirmation rejected: invoice_invalidate_failed")
     }
   }
 
@@ -705,13 +704,35 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
 }
 
 function unsupported(): WebhookActionResult {
+  return failedAction(PaymentActions.NOT_SUPPORTED)
+}
+
+function failedAction(
+  action: PaymentActions = PaymentActions.FAILED
+): WebhookActionResult {
   return {
-    action: PaymentActions.NOT_SUPPORTED,
+    action,
     data: {
       session_id: "",
       amount: 0,
     },
   }
+}
+
+const BINDING_CODES = new Set([
+  "payment_row_missing",
+  "store_mismatch",
+  "amount_mismatch",
+  "currency_mismatch",
+  "cart_mismatch",
+  "session_mismatch",
+])
+
+function rejectionMessage(code: string): string {
+  if (BINDING_CODES.has(code)) {
+    return "BTCPay invoice does not match the stored payment."
+  }
+  return "BTCPay invoice cannot be authorized."
 }
 
 function resolveConfig(options: BtcpayOptions): ResolvedConfig {

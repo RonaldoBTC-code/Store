@@ -232,8 +232,16 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function redact(text: string, secret: string): string {
-  if (!secret) {
-    return text
+  const secrets = [
+    secret,
+    process.env.BTCPAY_API_KEY,
+    process.env.BTCPAY_WEBHOOK_SECRET,
+  ]
+  let redacted = text
+  for (const value of secrets) {
+    if (typeof value === "string" && value) {
+      redacted = redacted.split(value).join("[redacted]")
+    }
   }
-  return text.split(secret).join("[redacted]")
+  return redacted
 }

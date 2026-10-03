@@ -1,30 +1,35 @@
 /**
- * Settlement policy. Authorization happens only when BTCPay's invoice
- * `status` is `Settled` and `additionalStatus` is not a partial or invalid
- * payment. Browser return parameters are never an input to this decision.
+ * Settlement policy. Authorization happens only for Settled + None, or
+ * Settled + Marked, and only after the invoice matches the stored payment
+ * row. Browser return parameters are never an input.
  *
- * Official status values:
+ * Official values:
  * https://docs.btcpayserver.org/Development/ecommerce-integration-guide/
  * status: New | Processing | Expired | Invalid | Settled
  * additionalStatus: None | PaidLate | PaidPartial | Marked | PaidOver
  *
- * - Settled + None: confirmed payment for the invoice amount. Authorize.
- * - Settled + PaidOver: the invoice USD amount was paid and extra crypto
- *   arrived. The order total is still the invoice amount. Authorize.
- * - Settled + PaidLate: BTCPay settled a payment that arrived after expiry.
- *   Authorize. Expired without Settled is not enough.
- * - Settled + Marked: a store admin marked the invoice settled in BTCPay.
- *   Authorize, because the server-side status is Settled.
- * - PaidPartial (any status): underpaid. Never authorize.
- * - Processing or New: payment is unseen or still unconfirmed. Do not
- *   authorize. The storefront keeps showing "pago pendiente de confirmación".
- * - Expired or Invalid: do not authorize. Webhooks for these states must not
- *   complete the cart.
+ * PaidOver and PaidLate are manual review. They never auto-authorize, including
+ * when status is Settled. PaidPartial, Expired, and Invalid never authorize.
+ * New or Processing with PaidPartial, PaidLate, PaidOver, or Marked never
+ * authorize.
  */
+export type InvoiceCode =
+  | "settled"
+  | "pending"
+  | "processing"
+  | "expired"
+  | "invalid"
+  | "partial"
+  | "paid_late"
+  | "paid_over"
+  | "unsupported"
+
 export type InvoiceVerdict =
-  | { outcome: "authorize" }
-  | { outcome: "pending"; reason: string }
-  | { outcome: "reject"; reason: string }
+  | { outcome: "authorize"; code: "settled" }
+  | { outcome: "pending"; code: "pending" | "processing" }
+  | { outcome: "reject"; code: Exclude<InvoiceCode, "settled" | "pending" | "processing"> }
+
+const MANUAL_REVIEW = new Set(["PaidLate", "PaidOver"])
 
 export function judgeInvoice(input: {
   status?: string | null
@@ -34,60 +39,74 @@ export function judgeInvoice(input: {
   const additional = input.additionalStatus || "None"
 
   if (additional === "PaidPartial") {
-    return {
-      outcome: "reject",
-      reason:
-        "Invoice is underpaid (additionalStatus PaidPartial). Payment is not authorized.",
-    }
+    return { outcome: "reject", code: "partial" }
   }
-
+  if (additional === "PaidLate") {
+    return { outcome: "reject", code: "paid_late" }
+  }
+  if (additional === "PaidOver") {
+    return { outcome: "reject", code: "paid_over" }
+  }
   if (status === "Invalid" || additional === "Invalid") {
-    return {
-      outcome: "reject",
-      reason: "Invoice is invalid. Payment is not authorized.",
-    }
+    return { outcome: "reject", code: "invalid" }
   }
-
   if (status === "Expired") {
-    return {
-      outcome: "reject",
-      reason:
-        "Invoice is expired. Payment is not authorized until BTCPay reports status Settled.",
-    }
+    return { outcome: "reject", code: "expired" }
+  }
+  if (
+    (status === "New" || status === "Processing" || status === "Expired" || status === "Invalid") &&
+    (additional === "Marked" || MANUAL_REVIEW.has(additional))
+  ) {
+    return { outcome: "reject", code: "unsupported" }
   }
 
+  if (status === "Settled" && (additional === "None" || additional === "Marked")) {
+    return { outcome: "authorize", code: "settled" }
+  }
   if (status === "Settled") {
-    if (
-      additional === "None" ||
-      additional === "PaidOver" ||
-      additional === "PaidLate" ||
-      additional === "Marked"
-    ) {
-      return { outcome: "authorize" }
-    }
-    return {
-      outcome: "reject",
-      reason: `Invoice is Settled with unsupported additionalStatus ${additional}.`,
-    }
+    return { outcome: "reject", code: "unsupported" }
   }
-
   if (status === "Processing") {
-    return {
-      outcome: "pending",
-      reason:
-        "Payment was seen but is not confirmed. Waiting for BTCPay status Settled.",
-    }
+    return { outcome: "pending", code: "processing" }
   }
-
   if (status === "New") {
-    return {
-      outcome: "pending",
-      reason: "Invoice is unpaid. Waiting for BTCPay status Settled.",
-    }
+    return { outcome: "pending", code: "pending" }
   }
+  return { outcome: "reject", code: "unsupported" }
+}
 
-  return {
-    outcome: "reject",
-    reason: `Unsupported BTCPay invoice status "${status || "unknown"}".`,
+export type BindingCode =
+  | "payment_row_missing"
+  | "store_mismatch"
+  | "amount_mismatch"
+  | "currency_mismatch"
+  | "cart_mismatch"
+
+export function paymentBindingCode(input: {
+  invoiceStoreId: string
+  expectedStoreId: string
+  invoiceCurrency: string
+  invoiceAmountCents: number | null
+  invoiceCartId: string
+  row: { cartId: string; amountCents: number } | null
+}): BindingCode | null {
+  if (!input.row) {
+    return "payment_row_missing"
   }
+  if (!input.invoiceStoreId || input.invoiceStoreId !== input.expectedStoreId) {
+    return "store_mismatch"
+  }
+  if (input.invoiceCurrency.toUpperCase() !== "USD") {
+    return "currency_mismatch"
+  }
+  if (
+    input.invoiceAmountCents == null ||
+    input.invoiceAmountCents !== input.row.amountCents
+  ) {
+    return "amount_mismatch"
+  }
+  if (!input.invoiceCartId || input.invoiceCartId !== input.row.cartId) {
+    return "cart_mismatch"
+  }
+  return null
 }

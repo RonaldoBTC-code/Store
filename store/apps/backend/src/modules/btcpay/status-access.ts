@@ -42,8 +42,37 @@ export function callerOwnsCart(input: {
   return true
 }
 
+export const STATUS_PENDING_MESSAGE = "pago pendiente de confirmación"
+
+export const STATUS_SETTLED_MESSAGE = "Pago confirmado."
+
+export const STATUS_CLOSED_MESSAGE =
+  "El pago con Bitcoin no se completó. Puedes intentar de nuevo."
+
+export const STATUS_PAID_LATE_MESSAGE =
+  "El pago llegó tarde y está en revisión. No se confirmó automáticamente."
+
+export const STATUS_PAID_OVER_MESSAGE =
+  "El pago supera el total y está en revisión. No se confirmó automáticamente."
+
+export const STATUS_MISMATCH_MESSAGE = "El pago no coincide con este carrito."
+
+export type PublicStatusState =
+  | "pending"
+  | "processing"
+  | "settled"
+  | "expired"
+  | "invalid"
+  | "partial"
+  | "paid_late"
+  | "paid_over"
+  | "limit_reached"
+  | "failed"
+  | "cart_changed"
+  | "mismatch"
+
 export type PublicStatus = {
-  state: "pending" | "settled" | "failed" | "cart_changed" | "mismatch"
+  state: PublicStatusState
   message: string
   expires_at?: string
   order_id?: string

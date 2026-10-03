@@ -6,6 +6,7 @@ import type {
 import { authenticate, defineMiddlewares } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 import { unitCount } from "../modules/btcpay/cart-snapshot"
+import { btcpayWebhookGuard } from "../modules/btcpay/webhook-guard"
 
 /**
  * Stamps the BTCPay payment session with the server cart and the connection
@@ -76,6 +77,12 @@ export default defineMiddlewares({
       matcher: "/store/payment-collections/:id/payment-sessions",
       method: "POST",
       middlewares: [stampBtcpayPaymentContext],
+    },
+    {
+      matcher: "/hooks/payment/btcpay_btcpay",
+      method: "POST",
+      bodyParser: { preserveRawBody: true },
+      middlewares: [btcpayWebhookGuard],
     },
     {
       matcher: "/store/btcpay/status",

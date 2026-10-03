@@ -2,7 +2,10 @@ import type { MedusaResponse, MedusaStoreRequest } from "@medusajs/framework/htt
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 import { BtcpayHttpClient } from "../../../../modules/btcpay/client"
 import { isBtcpayConfigured } from "../../../../modules/btcpay/constants"
-import { judgeInvoice } from "../../../../modules/btcpay/invoice-decision"
+import {
+  judgeInvoice,
+  paymentBindingCode,
+} from "../../../../modules/btcpay/invoice-decision"
 import { majorToCents } from "../../../../modules/btcpay/money"
 import { getBtcpayPaymentStore } from "../../../../modules/btcpay/payment-registry"
 import {
@@ -11,12 +14,16 @@ import {
   hashRateLimitKey,
   publicStatus,
   readStatusQuery,
+  STATUS_CLOSED_MESSAGE,
+  STATUS_MISMATCH_MESSAGE,
   STATUS_NOT_FOUND,
+  STATUS_PAID_LATE_MESSAGE,
+  STATUS_PAID_OVER_MESSAGE,
+  STATUS_PENDING_MESSAGE,
   STATUS_RATE_LIMITED,
+  STATUS_SETTLED_MESSAGE,
 } from "../../../../modules/btcpay/status-access"
 import { getStockReserver } from "../../../../modules/btcpay/stock"
-
-const PENDING_MESSAGE = "pago pendiente de confirmación"
 
 type SessionRecord = {
   id?: string
@@ -48,7 +55,7 @@ export async function GET(req: MedusaStoreRequest, res: MedusaResponse) {
   if (!allowStatusRequest(rateKeys, Date.now())) {
     res.status(429).json(
       publicStatus({
-        state: "failed",
+        state: "limit_reached",
         message: STATUS_RATE_LIMITED,
       })
     )
@@ -186,30 +193,34 @@ export async function GET(req: MedusaStoreRequest, res: MedusaResponse) {
   const invoiceCents = majorToCents(fetched.amount)
   const metadataCart =
     stringValue(fetched.metadata.cartId) || stringValue(fetched.metadata.orderId)
+  const row = await getBtcpayPaymentStore()?.findByInvoice(invoiceId)
+  const binding = paymentBindingCode({
+    invoiceStoreId: fetched.storeId,
+    expectedStoreId: storeId,
+    invoiceCurrency: fetched.currency,
+    invoiceAmountCents: invoiceCents,
+    invoiceCartId: metadataCart,
+    row: row ? { cartId: row.cartId, amountCents: row.amountCents } : null,
+  })
 
-  if (
-    fetched.storeId !== storeId ||
-    fetched.currency.toUpperCase() !== "USD" ||
-    invoiceCents !== sessionCents ||
-    metadataCart !== cart.id
-  ) {
+  if (binding || (row && row.cartId !== cart.id) || (row && row.amountCents !== sessionCents)) {
     res.json(
       publicStatus({
         state: "mismatch",
-        message: "El pago no coincide con este carrito.",
+        message: STATUS_MISMATCH_MESSAGE,
       })
     )
     return
   }
 
   const verdict = judgeInvoice(fetched)
-  const expiresAt = fetched.expirationTime ?? null
+  const expiresAt = fetched.expirationTime ?? undefined
   if (verdict.outcome === "authorize") {
     res.json(
       publicStatus({
         state: "settled",
-        expires_at: expiresAt ?? undefined,
-        message: "Pago confirmado.",
+        expires_at: expiresAt,
+        message: STATUS_SETTLED_MESSAGE,
       })
     )
     return
@@ -218,20 +229,49 @@ export async function GET(req: MedusaStoreRequest, res: MedusaResponse) {
   if (verdict.outcome === "pending") {
     res.json(
       publicStatus({
-        state: "pending",
-        expires_at: expiresAt ?? undefined,
-        message: PENDING_MESSAGE,
+        state: verdict.code,
+        expires_at: expiresAt,
+        message: STATUS_PENDING_MESSAGE,
       })
     )
     return
   }
 
-  await releaseHold(fetched.id, fetched.status)
+  if (verdict.code === "paid_late" || verdict.code === "paid_over") {
+    res.json(
+      publicStatus({
+        state: verdict.code,
+        expires_at: expiresAt,
+        message:
+          verdict.code === "paid_late"
+            ? STATUS_PAID_LATE_MESSAGE
+            : STATUS_PAID_OVER_MESSAGE,
+      })
+    )
+    return
+  }
+
+  if (
+    verdict.code === "expired" ||
+    verdict.code === "invalid" ||
+    verdict.code === "partial"
+  ) {
+    await releaseHold(fetched.id, fetched.status)
+    res.json(
+      publicStatus({
+        state: verdict.code,
+        expires_at: expiresAt,
+        message: STATUS_CLOSED_MESSAGE,
+      })
+    )
+    return
+  }
+
   res.json(
     publicStatus({
       state: "failed",
-      expires_at: expiresAt ?? undefined,
-      message: "El pago con Bitcoin no se completó. Puedes intentar de nuevo.",
+      expires_at: expiresAt,
+      message: STATUS_CLOSED_MESSAGE,
     })
   )
 }

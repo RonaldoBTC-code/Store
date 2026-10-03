@@ -61,6 +61,7 @@ export type PaymentRecord = {
   invoiceId: string | null
   ipHash: string | null
   unitCount: number
+  amountCents: number
   createdAt: Date
   expiresAt: Date
   reservationIds: string[]

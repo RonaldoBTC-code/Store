@@ -6,7 +6,19 @@ import { HttpTypes } from "@medusajs/types"
 import { getAuthHeaders, getCartId } from "./cookies"
 
 export type BtcpayPaymentState = {
-  state: "pending" | "settled" | "failed" | "cart_changed" | "mismatch"
+  state:
+    | "pending"
+    | "processing"
+    | "settled"
+    | "expired"
+    | "invalid"
+    | "partial"
+    | "paid_late"
+    | "paid_over"
+    | "limit_reached"
+    | "failed"
+    | "cart_changed"
+    | "mismatch"
   message: string
   order_id?: string | null
   expires_at?: string | null

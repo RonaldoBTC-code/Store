@@ -27,6 +27,7 @@ import {
 import {
   BtcpayPaymentStore,
   CommitInvoiceInput,
+  StoredInvoicePayment,
 } from "../btcpay/payment-store"
 import BtcpayInvoiceClaim from "./models/invoice-claim"
 import BtcpayPayment from "./models/payment"
@@ -41,6 +42,7 @@ type PaymentRow = {
   invoice_id?: string | null
   ip_hash?: string | null
   unit_count?: number | null
+  amount_cents?: number | string | null
   created_at?: Date | string | null
   expires_at?: Date | string | null
   reservation_ids?: unknown
@@ -157,6 +159,32 @@ class BtcpayClaimModuleService
     }
   }
 
+  async findByInvoice(invoiceId: string): Promise<StoredInvoicePayment | null> {
+    if (!invoiceId) {
+      return null
+    }
+    const rows = await this.listBtcpayPayments({
+      provider: BTCPAY_PROVIDER,
+      invoice_id: invoiceId,
+    })
+    const row = rows[0]
+    if (!row) {
+      return null
+    }
+    const amount = row.amount_cents
+    const amountCents =
+      typeof amount === "number"
+        ? amount
+        : typeof amount === "string" && /^-?\d+$/.test(amount)
+          ? Number(amount)
+          : 0
+    return {
+      cartId: row.cart_id || "",
+      amountCents,
+      paymentSessionHash: row.payment_session_hash || "",
+    }
+  }
+
   async close(
     invoiceId: string,
     status: Exclude<PaymentStatus, "holding" | "pending">
@@ -233,6 +261,12 @@ function mapPayment(row: PaymentRow): PaymentRecord {
     invoiceId: row.invoice_id ?? null,
     ipHash: row.ip_hash ?? null,
     unitCount: typeof row.unit_count === "number" ? row.unit_count : 0,
+    amountCents:
+      typeof row.amount_cents === "number"
+        ? row.amount_cents
+        : typeof row.amount_cents === "string" && /^-?\d+$/.test(row.amount_cents)
+          ? Number(row.amount_cents)
+          : 0,
     createdAt: asDate(row.created_at),
     expiresAt: asDate(row.expires_at),
     reservationIds: readReservationIds(row.reservation_ids),

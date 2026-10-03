@@ -57,7 +57,7 @@ export default function BtcpayReturn({ cartId }: { cartId: string }) {
           return
         }
 
-        if (status.state === "pending") {
+        if (status.state === "pending" || status.state === "processing") {
           setFailed(false)
           setExpiresAt(status.expires_at ?? null)
           setMessage(PENDING_MESSAGE)

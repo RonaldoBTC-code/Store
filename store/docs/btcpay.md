@@ -46,23 +46,47 @@ The deployment docs also describe third-party hosts for people who do not want t
 2. Set the store's default currency to USD. Medusa rejects any invoice that is not USD.
 3. Enable on-chain Bitcoin. Enable Lightning on the store as well if you want Lightning checkout.
 4. Copy the store id. It is the `BTCPAY_STORE_ID` value.
+5. Connect a watch-only wallet. Do this before the store takes a payment. The steps for Ramoide are in the next section.
 
 Do not put customer addresses or emails on the invoice. The backend sends the cart id, the Medusa payment session id, and the USD amount in cents. BTCPay documents `orderId` as the external order id and indexes it: <https://docs.btcpayserver.org/Development/ecommerce-integration-guide/>
 
+## Watch-only wallet (Ramoide)
+
+The BTCPay store must use a watch-only extended public key. Do not put a hot private key, seed, or xprv on this server.
+
+BTCPay's wallet guide is <https://docs.btcpayserver.org/Wallet/>. A watch-only wallet lets the server derive receive addresses and see payments. It cannot sign or spend.
+
+1. On an offline computer or a hardware wallet, export the account extended public key (`xpub`, `ypub`, or `zpub`). Do not export the seed or any private key.
+2. In BTCPay, open the store, then Bitcoin wallet, then set up or replace the wallet.
+3. Choose to connect an existing wallet and paste only that extended public key.
+4. Check the derivation scheme against the wallet's address preview before saving. BTCPay shows the addresses it will watch.
+5. Confirm the wallet screen says the wallet is watch-only. If BTCPay generated a seed on the server, remove that wallet and start again from the public key.
+
+Never paste a seed, private key, or hot-wallet backup into the BTCPay host or the Medusa host. The API key below is not a wallet key. It cannot spend if the store wallet is watch-only.
+
 ## API key (least privilege)
 
-Create the key under Account, Manage account, API keys, and limit it to this one store. The header format is `Authorization: token <api key>` (<https://docs.btcpayserver.org/Developers/api/>).
+Create the key under Account, Manage account, API keys, and limit it to this one store. The header format is `Authorization: token <api key>` (<https://docs.btcpayserver.org/Developers/api/>). The key is backend-only. The name is `BTCPAY_API_KEY`, never `NEXT_PUBLIC_BTCPAY_API_KEY`.
 
-Permissions this integration calls:
+The minimum permissions for taking a payment are create and view invoices for that store only:
 
 | Permission | Why |
 | --- | --- |
 | `btcpay.store.cancreateinvoice` | `POST /api/v1/stores/{storeId}/invoices` |
 | `btcpay.store.canviewinvoices` | `GET /api/v1/stores/{storeId}/invoices/{invoiceId}` |
-| `btcpay.store.canmodifyinvoices` | `POST /api/v1/stores/{storeId}/invoices/{invoiceId}/status` with `Invalid`, used only to drop an unpaid `New` invoice |
-| `btcpay.store.cancreatenonapprovedpullpayments` | `POST /api/v1/stores/{storeId}/invoices/{invoiceId}/refund` |
+
+The webhook secret is not an API-key permission. It is the separate value BTCPay shows when the webhook is created, stored as `BTCPAY_WEBHOOK_SECRET`.
+
+This code also calls two other routes when those actions are used. Leave the permissions off unless you use the action:
+
+| Permission | Used only for |
+| --- | --- |
+| `btcpay.store.canmodifyinvoices` | Canceling an unpaid `New` invoice (`POST .../invoices/{invoiceId}/status` with `Invalid`) |
+| `btcpay.store.cancreatenonapprovedpullpayments` | A refund pull payment (`POST .../invoices/{invoiceId}/refund`) |
 
 The ecommerce guide also lists `btcpay.store.webhooks.canmodifywebhooks` and `btcpay.store.canviewstoresettings` for an automated connect flow. This codebase does not call those endpoints. Leave them off. The refund action on current BTCPay source is authorized with `btcpay.store.cancreatenonapprovedpullpayments`, not the broader `btcpay.store.cancreatepullpayments`.
+
+Neither the API key nor the webhook secret is written to logs or error messages. Request failures replace those values with `[redacted]`.
 
 ## Webhook
 
@@ -83,7 +107,7 @@ Put the webhook secret in `BTCPAY_WEBHOOK_SECRET`. Subscribe at least to:
 - `InvoiceReceivedPayment`
 - `InvoicePaymentSettled`
 
-Medusa answers the webhook immediately and processes it on a queue. The default delay is 5 seconds (`webhook_delay`). The handler checks the `BTCPay-Sig` header before it trusts the body. The signature is `sha256=` plus the hex HMAC-SHA256 of the raw body, using the webhook secret (<https://docs.btcpayserver.org/Development/GreenFieldExample-NodeJS/>). A bad signature is ignored. A valid signature is still not trusted for the amount or the status: the backend loads the invoice again with `GET /api/v1/stores/{storeId}/invoices/{invoiceId}`.
+`POST /hooks/payment/btcpay_btcpay` keeps the raw body (`preserveRawBody: true` on that route). Express stores those bytes on `req.rawBody` before it parses JSON. Middleware computes HMAC-SHA256 over that buffer, not over `JSON.stringify` of the parsed object. The header is `BTCPay-Sig: sha256=` plus the lowercase hex digest, keyed with `BTCPAY_WEBHOOK_SECRET` (<https://docs.btcpayserver.org/Development/GreenFieldExample-NodeJS/>). The comparison uses `crypto.timingSafeEqual` after a length check. A missing header, a missing raw body, or a bad signature returns HTTP 401 `{ "message": "Unauthorized" }` and does not call the route. Nothing is queued, stored, or processed. The provider checks the same raw-body signature again before it re-fetches the invoice. A valid signature is still not trusted for the amount or the status: the backend loads the invoice again with `GET /api/v1/stores/{storeId}/invoices/{invoiceId}` and compares it to the `btcpay_payment` row.
 
 ## Environment variables
 
@@ -125,6 +149,33 @@ The raw IP and the raw Medusa payment session id are not stored. Both are HMAC-S
 
 `GET /store/btcpay/status` reads `cart_id` and `payment_session_id` only. An invoice id in the query is ignored. The payment session must belong to that cart. If the cart is assigned to a customer, the caller must be that customer. The JSON body is `state`, `message`, and sometimes `expires_at` and `order_id`. It does not include a name, email, address, or invoice id. Requests are limited per IP and per cart (`BTCPAY_STATUS_MAX_REQUESTS`, default 30, and `BTCPAY_STATUS_WINDOW_SECONDS`, default 60). A blocked caller gets HTTP 429 and a message with no counts.
 
+### Status JSON the return page reads
+
+`expires_at` is omitted when BTCPay did not send `expirationTime`. `order_id` is present only after the cart has an order.
+
+| Situation | HTTP | JSON |
+| --- | --- | --- |
+| Invoice `New`, row matches | 200 | `{ "state": "pending", "message": "pago pendiente de confirmación", "expires_at": "<iso>" }` |
+| Invoice `Processing` and additional status `None`, row matches | 200 | `{ "state": "processing", "message": "pago pendiente de confirmación", "expires_at": "<iso>" }` |
+| Invoice `Settled` with `None` or `Marked`, row matches | 200 | `{ "state": "settled", "message": "Pago confirmado.", "expires_at": "<iso>" }` |
+| Same, and the cart already has an order | 200 | `{ "state": "settled", "message": "Pago confirmado.", "order_id": "<order id>" }` |
+| Invoice `Expired` | 200 | `{ "state": "expired", "message": "El pago con Bitcoin no se completó. Puedes intentar de nuevo.", "expires_at": "<iso>" }` |
+| Invoice `Invalid` | 200 | `{ "state": "invalid", "message": "El pago con Bitcoin no se completó. Puedes intentar de nuevo.", "expires_at": "<iso>" }` |
+| `PaidPartial` | 200 | `{ "state": "partial", "message": "El pago con Bitcoin no se completó. Puedes intentar de nuevo.", "expires_at": "<iso>" }` |
+| `PaidLate` | 200 | `{ "state": "paid_late", "message": "El pago llegó tarde y está en revisión. No se confirmó automáticamente.", "expires_at": "<iso>" }` |
+| `PaidOver` | 200 | `{ "state": "paid_over", "message": "El pago supera el total y está en revisión. No se confirmó automáticamente.", "expires_at": "<iso>" }` |
+| Poll limit | 429 | `{ "state": "limit_reached", "message": "Demasiadas consultas. Espera un momento e inténtalo de nuevo." }` |
+| Store id, cents, currency, or cart does not match the row | 200 | `{ "state": "mismatch", "message": "El pago no coincide con este carrito." }` |
+| Cart total changed | 200 | `{ "state": "cart_changed", "message": "El total del carrito cambió. Vuelve al checkout para generar un nuevo pago." }` |
+| Missing cart, or the session is not this caller's | 200 | `{ "state": "failed", "message": "No encontramos el carrito." }` |
+| BTCPay env is unset | 200 | `{ "state": "failed", "message": "Los pagos con Bitcoin no están habilitados." }` |
+| Cart is not Ecuador | 200 | `{ "state": "failed", "message": "Bitcoin solo está disponible para Ecuador." }` |
+| Cart has no BTCPay session | 200 | `{ "state": "failed", "message": "Este carrito no tiene un pago con Bitcoin." }` |
+
+The return page (`btcpay-return`) shows `pago pendiente de confirmación` and the countdown for `pending` and `processing` (`data-testid="btcpay-pending-confirmation"`). For `settled` with `order_id` it redirects to `/{country}/order/{order_id}/confirmed`. For `settled` without `order_id` it calls `placeOrder` and keeps the pending sentence while that runs. Every other state sets `data-testid="btcpay-payment-error"` and shows `message`. `paid_late` and `paid_over` use that error paragraph. They do not show "Pago confirmado."
+
+The storefront SDK throws on HTTP 429, and the return page catch keeps `pago pendiente de confirmación` on the waiting screen. It does not render the `limit_reached` body. The checkout payment step is a different limit: `BTCPAY_PENDING_LIMIT` shows "Ya tienes un pago pendiente, termínalo o espera a que venza".
+
 The return URL sent to BTCPay must use an origin already listed in `STORE_CORS`, and the path must end with `/checkout/btcpay/return`.
 
 After the variables are set, run the backend migrations so `btcpay_invoice_claim` and `btcpay_payment` exist (`pnpm exec medusa db:migrate` from `apps/backend`). The claim table's `invoice_id` unique index stops a webhook and the shopper's return from creating two orders for one invoice.
@@ -141,7 +192,7 @@ The Ecuador region itself is created by the region seed, not by this payment pro
 3. The browser is sent to the invoice `checkoutLink` on the BTCPay origin. The modal (`{BTCPAY_URL}/modal/btcpay.js`) is documented by BTCPay and is not what this storefront uses.
 4. BTCPay sends the shopper back to `/{country}/checkout/btcpay/return`. That page ignores payment status in the query string. It asks the backend `GET /store/btcpay/status?cart_id=...`, which loads the cart and re-fetches the invoice.
 5. Until the invoice is `Settled`, the page shows **pago pendiente de confirmación** (`data-testid="btcpay-pending-confirmation"`).
-6. When the invoice is settled, the page completes the cart. A `InvoiceSettled` webhook does the same through Medusa's payment webhook. Amounts are compared in integer US cents against the cart total stored on the payment session. A different amount, a non-USD currency, or another cart is rejected.
+6. When the invoice is settled, the page completes the cart. An `InvoiceSettled` webhook does the same through Medusa's payment webhook. Authorization requires every one of these to match the `btcpay_payment` row: invoice `storeId` equals `BTCPAY_STORE_ID`, the amount in integer US cents, currency USD, and `cart_id` in the invoice metadata. A mismatch does not authorize, including when BTCPay says `Settled`. The log line is `BTCPay confirmation rejected: <reason code>` and does not include an id or an amount.
 7. The first confirmation inserts a row in `btcpay_invoice_claim`. The unique `invoice_id` makes the other confirmation fail instead of placing a second order.
 
 ### How invoice states are treated
@@ -150,15 +201,16 @@ BTCPay's guide says to read both `status` and `additionalStatus`: <https://docs.
 
 | Server-side state | What we do |
 | --- | --- |
-| `Settled` and additional status `None` | Authorize and, inside Medusa, mark the payment captured. The bitcoin is already settled; capture does not move more funds. |
-| `Settled` and `PaidOver` | Authorize for the invoice's USD total. Extra crypto is BTCPay's overpay flag, not a larger order. |
-| `Settled` and `PaidLate` | Authorize. BTCPay has accepted a payment that landed after expiry. |
-| `Settled` and `Marked` | Authorize. A BTCPay store admin marked the invoice settled. |
-| `Processing` or `New` | Do not authorize. The return page stays on "pago pendiente de confirmación". The webhook action is `not_supported`, so Medusa does not complete the cart. `Processing` means the payment was seen and is not confirmed yet. |
-| `PaidPartial` on any status | Reject. The invoice is underpaid. |
-| `Expired` | Reject until BTCPay itself moves the invoice to `Settled`. |
-| `Invalid` | Reject. |
-| Amount, currency, store id, cart id, or payment session id does not match | Reject. The browser cannot override this. |
+| `Settled` and additional status `None`, and the row matches | Authorize and, inside Medusa, mark the payment captured. The bitcoin is already settled; capture does not move more funds. |
+| `Settled` and `Marked`, and the row matches | Authorize. A BTCPay store admin marked the invoice settled. |
+| `PaidOver` on any status, including `Settled` | Manual review. Do not auto-authorize. The hold stays so stock is not released while a person checks the overpay. |
+| `PaidLate` on any status, including `Settled` | Manual review. Do not auto-authorize. BTCPay accepted a payment after expiry; this store does not complete the order from that flag. The hold stays. |
+| `Processing` or `New` with additional status `None`, and the row matches | Do not authorize. The return page stays on "pago pendiente de confirmación". The webhook action is `not_supported`, so Medusa does not complete the cart. `Processing` means the payment was seen and is waiting for confirmations. |
+| `PaidPartial` on any status | Do not authorize. The invoice is underpaid. |
+| `Expired` | Do not authorize. |
+| `Invalid` | Do not authorize. |
+| `New`, `Processing`, `Expired`, or `Invalid` with `Marked`, `PaidPartial`, `PaidLate`, or `PaidOver` | Do not authorize. `PaidLate` and `PaidOver` are the manual-review cases above. |
+| Store id, integer cents, USD, or cart id does not match the `btcpay_payment` row | Do not authorize, even when the invoice is `Settled`. The log is a reason code only. |
 
 ## Cancel and refund
 

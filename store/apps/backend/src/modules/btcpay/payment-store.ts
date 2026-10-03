@@ -17,10 +17,17 @@ export type CommitInvoiceInput = {
   reservationIds: string[]
 }
 
+export type StoredInvoicePayment = {
+  cartId: string
+  amountCents: number
+  paymentSessionHash: string
+}
+
 export interface BtcpayPaymentStore {
   tryAcquire(input: AcquireInput): Promise<AcquireResult>
   commitInvoice(input: CommitInvoiceInput): Promise<void>
   abort(id: string): Promise<void>
+  findByInvoice(invoiceId: string): Promise<StoredInvoicePayment | null>
   close(
     invoiceId: string,
     status: Exclude<PaymentStatus, "holding" | "pending">
@@ -47,6 +54,7 @@ export class MemoryBtcpayPaymentStore implements BtcpayPaymentStore {
         invoiceId: null,
         ipHash: input.ipHash,
         unitCount: input.units,
+        amountCents: input.amountCents,
         createdAt: now,
         expiresAt: new Date(now.getTime() + DEFAULT_INVOICE_TTL_MS),
         reservationIds: [],
@@ -71,6 +79,18 @@ export class MemoryBtcpayPaymentStore implements BtcpayPaymentStore {
     const index = this.rows.findIndex((entry) => entry.id === id)
     if (index >= 0 && this.rows[index].status === "holding") {
       this.rows.splice(index, 1)
+    }
+  }
+
+  async findByInvoice(invoiceId: string): Promise<StoredInvoicePayment | null> {
+    const row = this.rows.find((entry) => entry.invoiceId === invoiceId)
+    if (!row) {
+      return null
+    }
+    return {
+      cartId: row.cartId,
+      amountCents: row.amountCents,
+      paymentSessionHash: row.paymentSessionId,
     }
   }
 
