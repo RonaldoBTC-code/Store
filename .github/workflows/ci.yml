@@ -160,6 +160,30 @@ jobs:
         working-directory: store/apps/backend
         run: pnpm test:unit
 
+  test-storefront:
+    name: Storefront unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: store/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: store/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # No `test` script on main, so this no-ops. Once @dtc/storefront
+      # defines `test` (`vitest run`), this required step runs it.
+      - name: Storefront unit tests
+        run: pnpm --filter @dtc/storefront run --if-present test
+
   test-integration:
     name: Backend integration tests
     runs-on: ubuntu-latest
