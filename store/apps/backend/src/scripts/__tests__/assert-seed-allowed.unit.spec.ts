@@ -1,6 +1,10 @@
 import type { MedusaContainer } from "@medusajs/framework/types"
 import { MedusaError } from "@medusajs/framework/utils"
-import { assertSeedAllowed, isProductionNodeEnv } from "../assert-seed-allowed"
+import {
+  assertSeedAllowed,
+  databaseHostIsLocal,
+  isProductionNodeEnv,
+} from "../assert-seed-allowed"
 import addEcRegion from "../add-ec-region"
 import ensureEcuadorStore from "../ensure-ecuador-store"
 import seedCapProducts from "../seed-cap-products"
@@ -183,6 +187,140 @@ describe("assertSeedAllowed", () => {
         expect(message).not.toContain("@localhost")
       }
     }
+  })
+
+  it("treats a URL with no host as non-local unless PGHOST is local", () => {
+    const databaseUrl = "postgres:///medusa"
+
+    expect(() =>
+      assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: databaseUrl })
+    ).toThrow(/database host is non-local/)
+
+    expect(() =>
+      assertSeedAllowed({
+        NODE_ENV: "development",
+        DATABASE_URL: databaseUrl,
+        PGHOST: "localhost",
+      })
+    ).not.toThrow()
+
+    expect(() =>
+      assertSeedAllowed({
+        NODE_ENV: "development",
+        DATABASE_URL: databaseUrl,
+        PGHOST: "db.example.com",
+      })
+    ).toThrow(/database host is non-local/)
+
+    try {
+      assertSeedAllowed({
+        NODE_ENV: "development",
+        DATABASE_URL: databaseUrl,
+        PGHOST: "db.example.com",
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      expect(message).not.toContain(databaseUrl)
+      expect(message).not.toContain("db.example.com")
+    }
+  })
+
+  it("refuses a remote PGHOSTADDR when the URL has no host", () => {
+    const databaseUrl = "postgres:///medusa"
+
+    expect(() =>
+      assertSeedAllowed({
+        NODE_ENV: "development",
+        DATABASE_URL: databaseUrl,
+        PGHOSTADDR: "10.1.2.3",
+      })
+    ).toThrow(/database host is non-local/)
+
+    expect(() =>
+      assertSeedAllowed({
+        NODE_ENV: "development",
+        DATABASE_URL: databaseUrl,
+        PGHOST: "localhost",
+        PGHOSTADDR: "10.1.2.3",
+      })
+    ).toThrow(/database host is non-local/)
+
+    expect(() =>
+      assertSeedAllowed({
+        NODE_ENV: "development",
+        DATABASE_URL: databaseUrl,
+        PGHOSTADDR: "127.0.0.1",
+      })
+    ).not.toThrow()
+
+    try {
+      assertSeedAllowed({
+        NODE_ENV: "development",
+        DATABASE_URL: databaseUrl,
+        PGHOSTADDR: "10.1.2.3",
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      expect(message).not.toContain(databaseUrl)
+      expect(message).not.toContain("10.1.2.3")
+    }
+  })
+
+  it("refuses a socket path or hostaddr query param unless ALLOW_PROD_SEED=true", () => {
+    const urls = [
+      "postgres://medusa:medusa@localhost:5432/store?host=/var/run/postgresql",
+      "postgres://medusa:medusa@localhost:5432/store?hostaddr=10.1.2.3",
+      "postgres://medusa:medusa@127.0.0.1:5432/store?hostaddr=127.0.0.1",
+    ]
+
+    for (const databaseUrl of urls) {
+      expect(() =>
+        assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: databaseUrl })
+      ).toThrow(/database host is non-local/)
+
+      try {
+        assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: databaseUrl })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        expect(message).not.toContain(databaseUrl)
+        expect(message).not.toContain("/var/run/postgresql")
+        expect(message).not.toContain("10.1.2.3")
+      }
+
+      expect(() =>
+        assertSeedAllowed({
+          NODE_ENV: "development",
+          ALLOW_PROD_SEED: "true",
+          DATABASE_URL: databaseUrl,
+        })
+      ).not.toThrow()
+    }
+  })
+
+  it("treats an unparseable password URL as non-local without echoing it", () => {
+    const databaseUrl = "postgres://app:p#ss/word?x@127.0.0.1:5432/store"
+
+    expect(() =>
+      assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: databaseUrl })
+    ).toThrow(/database host is non-local/)
+
+    try {
+      assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: databaseUrl })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      expect(message).not.toContain(databaseUrl)
+      expect(message).not.toContain("p#ss")
+      expect(message).not.toContain("Invalid URL")
+    }
+  })
+
+  it("accepts an IPv6 loopback host after stripping brackets", () => {
+    const databaseUrl = "postgres://medusa:medusa@[::1]:5432/store"
+
+    expect(databaseHostIsLocal(databaseUrl)).toBe(true)
+    expect(() =>
+      assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: databaseUrl })
+    ).not.toThrow()
   })
 
   it("refuses the postgres hostname unless ALLOW_PROD_SEED=true", () => {
