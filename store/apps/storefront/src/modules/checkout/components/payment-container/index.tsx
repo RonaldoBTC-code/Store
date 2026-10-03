@@ -4,7 +4,7 @@ import React, { useContext, type JSX } from "react"
 
 import Radio from "@modules/common/components/radio"
 
-import { isManual } from "@lib/constants"
+import { isManual, manualTestPaymentsEnabled } from "@lib/constants"
 import SkeletonCardDetails from "@modules/skeletons/components/skeleton-card-details"
 import { PaymentElement } from "@stripe/react-stripe-js"
 import PaymentTest from "../payment-test"
@@ -25,7 +25,7 @@ const PaymentContainer: React.FC<PaymentContainerProps> = ({
   disabled = false,
   children,
 }) => {
-  const isDevelopment = process.env.NODE_ENV === "development"
+  const showManualTest = isManual(paymentProviderId) && manualTestPaymentsEnabled()
 
   return (
     <RadioGroupOption
@@ -46,7 +46,7 @@ const PaymentContainer: React.FC<PaymentContainerProps> = ({
           <Text className="text-base-regular">
             {paymentInfoMap[paymentProviderId]?.title || paymentProviderId}
           </Text>
-          {isManual(paymentProviderId) && isDevelopment && (
+          {showManualTest && (
             <PaymentTest className="hidden small:block" />
           )}
         </div>
@@ -54,7 +54,7 @@ const PaymentContainer: React.FC<PaymentContainerProps> = ({
           {paymentInfoMap[paymentProviderId]?.icon}
         </span>
       </div>
-      {isManual(paymentProviderId) && isDevelopment && (
+      {showManualTest && (
         <PaymentTest className="small:hidden text-[10px]" />
       )}
       {children}

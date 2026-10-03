@@ -1,3 +1,4 @@
+import { isManual, manualTestPaymentsEnabled } from "@lib/constants"
 import { listCartShippingMethods } from "@lib/data/fulfillment"
 import { listCartPaymentMethods } from "@lib/data/payment"
 import { HttpTypes } from "@medusajs/types"
@@ -18,7 +19,11 @@ export default async function CheckoutForm({
   }
 
   const shippingMethods = await listCartShippingMethods(cart.id)
-  const paymentMethods = await listCartPaymentMethods(cart.region?.id ?? "")
+  const paymentMethods = (
+    await listCartPaymentMethods(cart.region?.id ?? "")
+  )?.filter(
+    (method) => manualTestPaymentsEnabled() || !isManual(method.id)
+  ) ?? null
 
   if (!shippingMethods || !paymentMethods) {
     return null

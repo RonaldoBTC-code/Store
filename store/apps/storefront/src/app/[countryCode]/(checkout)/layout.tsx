@@ -1,5 +1,12 @@
 import LocalizedClientLink from "@modules/common/components/localized-client-link"
 import ChevronDown from "@modules/common/icons/chevron-down"
+import { Metadata } from "next"
+
+export const metadata: Metadata = {
+  other: {
+    referrer: "origin",
+  },
+}
 
 export default function CheckoutLayout({
   children,

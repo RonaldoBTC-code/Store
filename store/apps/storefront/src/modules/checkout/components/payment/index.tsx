@@ -1,6 +1,11 @@
 "use client"
 import { RadioGroup } from "@headlessui/react"
-import { isStripeLike, paymentInfoMap } from "@lib/constants"
+import {
+  isPayphone,
+  isStripeLike,
+  payphoneStatusMessage,
+  paymentInfoMap,
+} from "@lib/constants"
 import { initiatePaymentSession } from "@lib/data/cart"
 import { CheckCircleSolid, CreditCard } from "@medusajs/icons"
 import ErrorMessage from "@modules/checkout/components/error-message"
@@ -42,6 +47,9 @@ const Payment = ({
   const pathname = usePathname()
 
   const isOpen = searchParams.get("step") === "payment"
+  const payphoneMessage =
+    payphoneStatusMessage(searchParams.get("payphone")) ??
+    payphoneStatusMessage(searchParams.get("payphone_status"))
 
   const setPaymentMethod = async (method: string) => {
     setError(null)
@@ -76,7 +84,57 @@ const Payment = ({
     })
   }
 
+  const handlePayphone = async () => {
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const collection = await initiatePaymentSession(cart, {
+        provider_id: selectedPaymentMethod,
+      })
+      const session = collection?.payment_collection?.payment_sessions?.find(
+        (paymentSession) => paymentSession.provider_id === selectedPaymentMethod
+      )
+      const payWithCard = session?.data?.pay_with_card
+
+      if (typeof payWithCard !== "string" || !payWithCard) {
+        setError("No pudimos iniciar el pago con PayPhone. Intenta de nuevo.")
+        return
+      }
+
+      let target: URL
+      try {
+        target = new URL(payWithCard)
+      } catch {
+        setError("No pudimos iniciar el pago con PayPhone. Intenta de nuevo.")
+        return
+      }
+
+      if (
+        target.protocol !== "https:" ||
+        target.hostname !== "pay.payphonetodoesposible.com" ||
+        target.username !== "" ||
+        target.password !== "" ||
+        target.port !== ""
+      ) {
+        setError("No pudimos iniciar el pago con PayPhone. Intenta de nuevo.")
+        return
+      }
+
+      window.location.assign(target.toString())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const handleSubmit = async () => {
+    if (isPayphone(selectedPaymentMethod)) {
+      await handlePayphone()
+      return
+    }
+
     setIsLoading(true)
     try {
       const shouldInputPaymentDetails =
@@ -139,6 +197,14 @@ const Payment = ({
         )}
       </div>
       <div>
+        {payphoneMessage && (
+          <Text
+            className="text-rose-400 mb-4"
+            data-testid="payphone-payment-error"
+          >
+            {payphoneMessage}
+          </Text>
+        )}
         <div className={isOpen ? "block" : "hidden"}>
           {!paidByGiftcard && availablePaymentMethods?.length && (
             <>
@@ -199,9 +265,11 @@ const Payment = ({
             }
             data-testid="submit-payment-button"
           >
-            {!activeSession && isStripeLike(selectedPaymentMethod)
-              ? "Enter payment details"
-              : "Continue to review"}
+            {isPayphone(selectedPaymentMethod)
+              ? "Pagar con PayPhone"
+              : !activeSession && isStripeLike(selectedPaymentMethod)
+                ? "Enter payment details"
+                : "Continue to review"}
           </Button>
         </div>
 
