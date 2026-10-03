@@ -19,7 +19,7 @@ export function readPayphoneNotification(
   const record = body as Record<string, unknown>
   const storeId = readString(record.StoreId) ?? readString(record.storeId)
 
-  if (storeId && expectedStoreId && storeId !== expectedStoreId) {
+  if (expectedStoreId && (!storeId || storeId !== expectedStoreId)) {
     return { action: "ack", errorCode: "666" }
   }
 

@@ -7,8 +7,9 @@ import { HttpTypes } from "@medusajs/types"
 import Divider from "@modules/common/components/divider"
 import { Heading, Text } from "@modules/common/components/ui"
 import Spinner from "@modules/common/icons/spinner"
+import { PAYPHONE_DOCUMENT_COPY } from "@lib/payphone-return"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { useActionState } from "react"
+import { useActionState, useEffect } from "react"
 import BillingAddress from "../billing_address"
 import ErrorMessage from "../error-message"
 import ShippingAddress from "../shipping-address"
@@ -26,18 +27,31 @@ const Addresses = ({
   const pathname = usePathname()
 
   const isOpen = searchParams.get("step") === "address"
+  const documentError = searchParams.get("payphone") === "document"
 
   const { state: sameAsBilling, toggle: toggleSameAsBilling } = useToggleState(
     cart?.shipping_address && cart?.billing_address
       ? compareAddresses(cart?.shipping_address, cart?.billing_address)
       : true
   )
+  const showBilling = !sameAsBilling || documentError
 
   const handleEdit = () => {
     router.push(pathname + "?step=address")
   }
 
   const [message, formAction] = useActionState(setAddresses, null)
+
+  useEffect(() => {
+    if (!documentError) {
+      return
+    }
+
+    const field = document.querySelector<HTMLElement>(
+      "[data-testid='billing-company-input']"
+    )
+    field?.focus()
+  }, [documentError])
 
   return (
     <div className="bg-ink-950 text-white">
@@ -64,6 +78,15 @@ const Addresses = ({
       {isOpen ? (
         <form action={formAction}>
           <div className="pb-8">
+            {documentError && (
+              <Text
+                className="text-rose-400 mb-4"
+                role="alert"
+                data-testid="payphone-document-error"
+              >
+                {PAYPHONE_DOCUMENT_COPY}
+              </Text>
+            )}
             <ShippingAddress
               customer={customer}
               checked={sameAsBilling}
@@ -71,7 +94,7 @@ const Addresses = ({
               cart={cart}
             />
 
-            {!sameAsBilling && (
+            {showBilling && (
               <div>
                 <Heading
                   level="h2"

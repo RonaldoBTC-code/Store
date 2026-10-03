@@ -105,20 +105,34 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
         const indexes = await MikroOrmWrapper.getManager().execute(
           `select indexname from pg_indexes where tablename = 'payphone_claim'`
         )
-        expect(indexes).toEqual(
+        const indexNames = (indexes as { indexname: string }[]).map(
+          (row) => row.indexname
+        )
+        expect(indexNames).toEqual(
           expect.arrayContaining([
-            {
-              indexname: "IDX_payphone_claim_client_transaction_id_unique",
-            },
+            "IDX_payphone_claim_client_transaction_id_unique",
+            "IDX_payphone_claim_cart_open_unique",
+            "IDX_payphone_claim_status_job",
+            "payphone_claim_transaction_id_key",
           ])
+        )
+        expect(indexNames).not.toContain(
+          "IDX_payphone_claim_transaction_id_unique"
         )
 
         const constraints = await MikroOrmWrapper.getManager().execute(
-          `select conname from pg_constraint where conname = 'payphone_claim_transaction_id_key'`
+          `select conname from pg_constraint where conrelid = 'payphone_claim'::regclass`
         )
-        expect(constraints).toEqual([
-          { conname: "payphone_claim_transaction_id_key" },
-        ])
+        const names = (constraints as { conname: string }[]).map(
+          (row) => row.conname
+        )
+        expect(names).toEqual(
+          expect.arrayContaining([
+            "payphone_claim_transaction_id_key",
+            "payphone_claim_status_check",
+            "payphone_claim_amount_cents_check",
+          ])
+        )
       })
 
       it("completes exactly one order from the webhook alone", async () => {
@@ -352,7 +366,7 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
               sessionData: { amount_cents: 3499 },
             }
           )
-        ).rejects.toThrow(PayphoneResultCode.failed)
+        ).rejects.toThrow(PayphoneResultCode.document)
 
         const [pending] = await service.listPayphoneClaims({
           client_transaction_id: "payses_85",
@@ -361,16 +375,18 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
         expect(reverses).toBe(1)
 
         const deps = {
-          listWork: (graceSeconds: number) =>
-            service.listReversalWork(graceSeconds),
+          listProcessingPastGrace: (graceSeconds: number) =>
+            service.listProcessingPastGrace(graceSeconds),
+          listNeedsReversal: () => service.listNeedsReversal(),
+          listStaleReversing: (staleSeconds: number) =>
+            service.listStaleReversing(staleSeconds),
+          markNeedsReversal: (id: string, transactionId: string) =>
+            service.markNeedsReversal(id, transactionId),
           claimReversal: (id: string) => service.claimReversal(id),
           markReversed: (id: string) => service.markReversed(id),
           releaseReversal: (id: string) => service.releaseReversal(id),
-          markCaptured: (
-            clientTransactionId: string,
-            transactionId: string,
-            orderId: string
-          ) => service.markCaptured(clientTransactionId, transactionId, orderId),
+          captureFromReversing: (id: string, orderId: string) =>
+            service.captureFromReversing(id, orderId),
           findOrderId: async () => null,
           reverse: (transactionId: number) => client.reverse(transactionId),
           graceSeconds: 0,
@@ -383,6 +399,63 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
           client_transaction_id: "payses_85",
         })
         expect(done?.status).toBe("reversed")
+      })
+
+      it("captures once when the order outlasts the processing grace", async () => {
+        const created = await service.ensurePending({
+          clientTransactionId: "payses_slow",
+          cartId: "cart_slow",
+          amountCents: 3499,
+          currencyCode: "usd",
+        })
+        expect(await service.claimProcessing(created.id)).toMatchObject({
+          status: "processing",
+        })
+        expect(await service.attachTransactionId(created.id, "90")).toBe(
+          "attached"
+        )
+        if (!/^[\w]+$/.test(created.id)) {
+          throw new Error("unexpected claim id")
+        }
+
+        await MikroOrmWrapper.getManager().execute(
+          `update "payphone_claim" set "updated_at" = now() - interval '11 minutes' where "id" = '${created.id}'`
+        )
+
+        let reverses = 0
+        const deps = {
+          graceSeconds: 10 * 60,
+          listProcessingPastGrace: (seconds: number) =>
+            service.listProcessingPastGrace(seconds),
+          listNeedsReversal: () => service.listNeedsReversal(),
+          listStaleReversing: (seconds: number) =>
+            service.listStaleReversing(seconds),
+          markNeedsReversal: (id: string, transactionId: string) =>
+            service.markNeedsReversal(id, transactionId),
+          claimReversal: (id: string) => service.claimReversal(id),
+          markReversed: (id: string) => service.markReversed(id),
+          releaseReversal: (id: string) => service.releaseReversal(id),
+          captureFromReversing: (id: string, orderId: string) =>
+            service.captureFromReversing(id, orderId),
+          findOrderId: async () => "order_slow",
+          reverse: async () => {
+            reverses += 1
+          },
+        }
+        await retryPayphoneReversals(deps)
+        await retryPayphoneReversals(deps)
+
+        expect(reverses).toBe(0)
+        const [row] = await service.listPayphoneClaims({ id: created.id })
+        expect(row).toMatchObject({
+          status: "captured",
+          order_id: "order_slow",
+          transaction_id: "90",
+        })
+        const claims = await service.listPayphoneClaims({
+          client_transaction_id: "payses_slow",
+        })
+        expect(claims).toHaveLength(1)
       })
     })
   },

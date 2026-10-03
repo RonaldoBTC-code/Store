@@ -14,6 +14,39 @@ import {
   SYSTEM_PROVIDER_ID,
   testPaymentsAllowed,
 } from "../modules/payphone/providers"
+import {
+  limitPayphoneComplete,
+  limitPayphoneNotification,
+} from "./payphone-rate-limit"
+
+const PAYPHONE_CLIENT_FIELDS = [
+  "payphone_confirmed",
+  "transaction_status",
+  "transaction_id",
+  "authorization_code",
+  "status_code",
+  "transaction_date",
+  "card_brand",
+  "last_digits",
+] as const
+
+export function payphoneClientSessionData(
+  clientData: Record<string, unknown> | undefined,
+  cart: { id: string; taxTotal: unknown; untaxedTotal: unknown }
+): Record<string, unknown> {
+  const data = { ...(clientData ?? {}) }
+
+  for (const field of PAYPHONE_CLIENT_FIELDS) {
+    delete data[field]
+  }
+
+  return {
+    ...data,
+    cart_id: cart.id,
+    cart_tax_total: cart.taxTotal,
+    cart_untaxed_total: cart.untaxedTotal,
+  }
+}
 
 export const PostPayphoneCompleteSchema = z.object({
   id: z.union([z.number().int().positive(), z.string().regex(/^\d{1,12}$/)]),
@@ -75,6 +108,39 @@ async function blockManualPaymentCompletion(
     res.status(403).json({
       code: "test_payment_disabled",
       message: "El pago de prueba no está disponible.",
+    })
+    return
+  }
+
+  next()
+}
+
+export async function blockPayphoneCartCompletion(
+  req: MedusaRequest,
+  res: MedusaResponse,
+  next: MedusaNextFunction
+) {
+  const query = req.scope.resolve(ContainerRegistrationKeys.QUERY)
+  const { data } = await query.graph({
+    entity: "cart",
+    fields: ["id", "payment_collection.payment_sessions.provider_id"],
+    filters: { id: req.params.id },
+  })
+  const sessions =
+    (
+      data?.[0] as
+        | {
+            payment_collection?: {
+              payment_sessions?: { provider_id?: string | null }[]
+            }
+          }
+        | undefined
+    )?.payment_collection?.payment_sessions ?? []
+
+  if (sessions.some((session) => session.provider_id === PAYPHONE_PROVIDER_ID)) {
+    res.status(403).json({
+      code: "payphone_direct_complete_blocked",
+      message: "El pago con PayPhone se confirma al volver de PayPhone.",
     })
     return
   }
@@ -165,12 +231,11 @@ async function attachPayphoneCartTotals(
 
   req.body = {
     ...body,
-    data: {
-      ...(body.data ?? {}),
-      cart_id: cart.id,
-      cart_tax_total: cart.tax_total,
-      cart_untaxed_total: untaxedTotal,
-    },
+    data: payphoneClientSessionData(body.data, {
+      id: cart.id,
+      taxTotal: cart.tax_total,
+      untaxedTotal,
+    }),
   }
   next()
 }
@@ -178,9 +243,17 @@ async function attachPayphoneCartTotals(
 export default defineMiddlewares({
   routes: [
     {
+      matcher: "/hooks/payphone/notificacion",
+      method: "POST",
+      middlewares: [limitPayphoneNotification],
+    },
+    {
       matcher: "/store/payphone/complete",
       method: "POST",
-      middlewares: [validateAndTransformBody(PostPayphoneCompleteSchema)],
+      middlewares: [
+        limitPayphoneComplete,
+        validateAndTransformBody(PostPayphoneCompleteSchema),
+      ],
     },
     {
       matcher: "/store/payment-collections/:id/payment-sessions",
@@ -190,7 +263,7 @@ export default defineMiddlewares({
     {
       matcher: "/store/carts/:id/complete",
       method: "POST",
-      middlewares: [blockManualPaymentCompletion],
+      middlewares: [blockManualPaymentCompletion, blockPayphoneCartCompletion],
     },
   ],
 })

@@ -11,8 +11,8 @@ type Env = {
 /**
  * Manual checkout (`pp_system_default`) is the dev and CI end-to-end path.
  * `NODE_ENV` of `development` or `test` keeps it. Production hides it.
- * `ALLOW_TEST_PAYMENTS=true` keeps it in production. That is never for
- * production: it marks an order paid without a charge. `false` disables it
+ * `ALLOW_TEST_PAYMENTS=true` puts it on the region list, and production
+ * startup throws before the process serves traffic. `false` disables it
  * even in development and CI.
  */
 export function testPaymentsAllowed(env: Env = process.env): boolean {
@@ -54,9 +54,9 @@ export function warnTestPaymentsInProduction(
 
 /**
  * Called from the claim module loader on every backend start.
- * Production refuses to boot when the enabled provider list includes
- * pp_system_default and ALLOW_TEST_PAYMENTS is not true.
- * ALLOW_TEST_PAYMENTS=true still boots, and warns, and is never for production.
+ * Production refuses to boot when ALLOW_TEST_PAYMENTS=true, and when the
+ * enabled provider list includes pp_system_default without that flag.
+ * The flag is never for production: it can mark an order paid without a charge.
  */
 export function assertManualProviderAllowedAtStartup(
   providers: string[],
@@ -67,7 +67,10 @@ export function assertManualProviderAllowedAtStartup(
   }
 
   if (env.ALLOW_TEST_PAYMENTS === "true") {
-    return
+    throw new MedusaError(
+      MedusaError.Types.NOT_ALLOWED,
+      "ALLOW_TEST_PAYMENTS=true cannot start in production. ALLOW_TEST_PAYMENTS is never for production."
+    )
   }
 
   if (providers.includes(SYSTEM_PROVIDER_ID)) {

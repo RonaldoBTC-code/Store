@@ -259,6 +259,10 @@ describe("PayphoneProviderService", () => {
       data: {
         ...(first.data ?? {}),
         payphone_transaction_id: 23178284,
+        cart_tax_total: 1.5,
+        cart_untaxed_total: 0,
+        pay_with_card: CARD_URL,
+        pay_with_payphone: APP_URL,
       },
       context: { idempotency_key: SESSION },
     })
@@ -268,10 +272,55 @@ describe("PayphoneProviderService", () => {
     })
 
     expect(first.status).toBe(PaymentSessionStatus.CAPTURED)
+    expect(replayed.data?.payphone_confirmed).toBe(false)
+    expect(replayed.data?.transaction_status).toBe("Pending")
     expect(second.status).toBe(PaymentSessionStatus.CAPTURED)
     expect(second.data?.transaction_id).toBe(23178284)
-    expect(confirmCalls).toEqual([{ id: 23178284, clientTxId: SESSION }])
+    expect(confirmCalls).toEqual([
+      { id: 23178284, clientTxId: SESSION },
+      { id: 23178284, clientTxId: SESSION },
+    ])
     expect(reverseCalls).toHaveLength(0)
+  })
+
+  it("does not keep payphone_confirmed sent by the client", async () => {
+    const { service, confirmCalls } = mockClient()
+    const forged = {
+      session_id: SESSION,
+      client_transaction_id: SESSION,
+      payphone_confirmed: true,
+      transaction_status: "Approved",
+      transaction_id: 23178284,
+      payphone_transaction_id: 23178284,
+      amount_cents: 1150,
+      cart_tax_total: 1.5,
+      cart_untaxed_total: 0,
+      pay_with_card: CARD_URL,
+      pay_with_payphone: APP_URL,
+      payment_id: "abc",
+    }
+    const updated = await service.updatePayment({
+      amount: 11.5,
+      currency_code: "usd",
+      data: forged,
+      context: { idempotency_key: SESSION },
+    })
+
+    expect(updated.data?.payphone_confirmed).toBe(false)
+    expect(updated.data?.transaction_status).toBe("Pending")
+    expect(updated.data?.transaction_id).toBeNull()
+
+    await service.authorizePayment({
+      data: {
+        ...(updated.data ?? {}),
+        payphone_confirmed: true,
+        transaction_status: "Approved",
+        transaction_id: 23178284,
+        payphone_transaction_id: 23178284,
+      },
+      context: { idempotency_key: SESSION },
+    })
+    expect(confirmCalls).toHaveLength(1)
   })
 
   it("drops a forged paid flag when the session is updated before confirm", async () => {

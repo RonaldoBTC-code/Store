@@ -1,5 +1,6 @@
 import { MedusaError } from "@medusajs/framework/utils"
 import { retryPayphoneReversals } from "../../../jobs/payphone-reverse"
+import { applyClaimTransition } from "../../payphone-claim/claim-transitions"
 import type { PayphoneClaimRecord } from "../../payphone-claim/service"
 import { PayphoneResultCode } from "../service"
 import { settlePayphonePayment, type PayphoneClaimStore } from "../settle"
@@ -79,30 +80,57 @@ function memoryClaims(): PayphoneClaimStore & {
       row.transactionId = transactionId
       return "attached"
     },
+    async releaseProcessing(id) {
+      const row = rows.get(id)
+      if (!row) {
+        return null
+      }
+
+      return applyClaimTransition(row, "processing", "pending", {
+        clearTransactionId: true,
+      })
+    },
     async markNeedsReversal(id, transactionId) {
       const row = rows.get(id)
       if (!row) {
-        return
+        return null
       }
 
-      row.status = "needs_reversal"
-      row.transactionId = transactionId
+      return applyClaimTransition(row, "processing", "needs_reversal", {
+        transactionId,
+      })
+    },
+    async claimReversal(id) {
+      const row = rows.get(id)
+      if (!row) {
+        return null
+      }
+
+      return applyClaimTransition(row, "needs_reversal", "reversing")
+    },
+    async releaseReversal(id) {
+      const row = rows.get(id)
+      if (!row) {
+        return null
+      }
+
+      return applyClaimTransition(row, "reversing", "needs_reversal")
     },
     async markReversed(id) {
       const row = rows.get(id)
       if (!row) {
-        return
+        return null
       }
 
-      row.status = "reversed"
+      return applyClaimTransition(row, "reversing", "reversed")
     },
     async markRejected(id) {
       const row = rows.get(id)
       if (!row) {
-        return
+        return null
       }
 
-      row.status = "rejected"
+      return applyClaimTransition(row, "processing", "rejected")
     },
     async markCaptured(clientTransactionId, transactionId, orderId) {
       const row = findClient(clientTransactionId)
@@ -110,9 +138,10 @@ function memoryClaims(): PayphoneClaimStore & {
         return
       }
 
-      row.status = "captured"
-      row.transactionId = transactionId
-      row.orderId = orderId
+      applyClaimTransition(row, "processing", "captured", {
+        transactionId,
+        orderId,
+      })
     },
     async getByTransactionId(transactionId) {
       for (const row of rows.values()) {
@@ -274,7 +303,7 @@ describe("settlePayphonePayment", () => {
         },
       })
 
-    await expect(run()).rejects.toThrow(PayphoneResultCode.failed)
+    await expect(run()).rejects.toThrow(PayphoneResultCode.document)
     expect(confirmCalls).toHaveLength(1)
     expect(completeAttempts()).toBe(1)
     expect(reverseCalls).toEqual([42])
@@ -301,54 +330,30 @@ describe("settlePayphonePayment", () => {
     expect(statusOf(claims)).toBe("needs_reversal")
 
     let jobReverses = 0
-    await retryPayphoneReversals({
+    const jobDeps = {
       graceSeconds: 0,
-      listWork: async () =>
+      listProcessingPastGrace: async () =>
+        [...claims.rows.values()].filter((row) => row.status === "processing"),
+      listNeedsReversal: async () =>
         [...claims.rows.values()].filter((row) => row.status === "needs_reversal"),
-      claimReversal: async (id) => {
-        const row = claims.rows.get(id)
-        if (!row || row.status !== "needs_reversal") {
-          return null
-        }
-
-        row.status = "reversing"
-        return { ...row }
-      },
-      markReversed: async (id) => {
-        const row = claims.rows.get(id)
-        if (row) {
-          row.status = "reversed"
-        }
-      },
-      releaseReversal: async (id) => {
-        const row = claims.rows.get(id)
-        if (row && row.status === "reversing") {
-          row.status = "needs_reversal"
-        }
-      },
-      markCaptured: async () => undefined,
+      listStaleReversing: async () => [],
+      markNeedsReversal: (id: string, transactionId: string) =>
+        claims.markNeedsReversal(id, transactionId),
+      claimReversal: (id: string) => claims.claimReversal(id),
+      markReversed: (id: string) => claims.markReversed(id),
+      releaseReversal: (id: string) => claims.releaseReversal(id),
+      captureFromReversing: async () => null,
       findOrderId: async () => null,
       reverse: async () => {
         jobReverses += 1
       },
-    })
+    }
+    await retryPayphoneReversals(jobDeps)
 
     expect(jobReverses).toBe(1)
     expect(statusOf(claims)).toBe("reversed")
 
-    await retryPayphoneReversals({
-      graceSeconds: 0,
-      listWork: async () =>
-        [...claims.rows.values()].filter((row) => row.status === "needs_reversal"),
-      claimReversal: async () => null,
-      markReversed: async () => undefined,
-      releaseReversal: async () => undefined,
-      markCaptured: async () => undefined,
-      findOrderId: async () => null,
-      reverse: async () => {
-        jobReverses += 1
-      },
-    })
+    await retryPayphoneReversals(jobDeps)
 
     expect(jobReverses).toBe(1)
   })

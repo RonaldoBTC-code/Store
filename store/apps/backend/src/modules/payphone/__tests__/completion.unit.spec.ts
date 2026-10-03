@@ -171,9 +171,12 @@ describe("planPayphoneCompletion", () => {
     expect(confirm).toHaveBeenCalledTimes(1)
 
     await service.authorizePayment({
-      data: authorized.data,
+      data: {
+        ...authorized.data,
+        payphone_confirmed: true,
+      },
       context: { idempotency_key: plan.sessionId },
     })
-    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(confirm).toHaveBeenCalledTimes(2)
   })
 })

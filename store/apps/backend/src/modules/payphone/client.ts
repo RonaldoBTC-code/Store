@@ -163,6 +163,7 @@ export class PayphoneClient implements PayphoneHttpClient {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(12_000),
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : "error de red"
@@ -185,6 +186,23 @@ export class PayphoneClient implements PayphoneHttpClient {
 
     return parsed
   }
+}
+
+export function isPayphoneTransactionMissing(error: unknown): boolean {
+  if (!(error instanceof PayphoneApiError)) {
+    return false
+  }
+
+  if (error.status === 404) {
+    return true
+  }
+
+  const text = error.message.toLowerCase()
+  return (
+    text.includes("not found") ||
+    text.includes("no encontr") ||
+    text.includes("no existe")
+  )
 }
 
 export function assertPayphonePaymentUrl(url: string) {

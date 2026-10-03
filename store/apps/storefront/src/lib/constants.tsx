@@ -93,7 +93,9 @@ export const payphoneStatusMessage = (code: string | null | undefined) => {
     case "client":
       return "Esta transacción no corresponde a tu pedido. No se creó el pedido."
     case "cart_changed":
-      return "Tu pedido cambió después de iniciar el pago. No se creó el pedido."
+      return "El total de tu carrito cambió"
+    case "document":
+      return "La cédula o el RUC no es válido."
     case "in_progress":
       return "Este pago ya se está procesando. Espera un momento y no vuelvas a confirmar."
     default:

@@ -4,13 +4,16 @@ import {
   splitFromCartTotals,
   untaxedMajorFromCart,
 } from "./amounts"
-import type { PayphoneHttpClient, PayphoneTransaction } from "./client"
+import {
+  isPayphoneTransactionMissing,
+  type PayphoneHttpClient,
+  type PayphoneTransaction,
+} from "./client"
 import type { PayphoneClaimRecord } from "../payphone-claim/service"
 import type { PayphoneChargeState } from "./return-state"
 import {
   buildConfirmedSessionData,
   classifyTransaction,
-  isServerConfirmed,
   payphoneShopperError,
   type PayphoneShopperCode,
 } from "./service"
@@ -42,9 +45,12 @@ export type PayphoneClaimStore = {
     id: string,
     transactionId: string
   ): Promise<"attached" | "duplicate">
-  markNeedsReversal(id: string, transactionId: string): Promise<void>
-  markReversed(id: string): Promise<void>
-  markRejected(id: string): Promise<void>
+  releaseProcessing(id: string): Promise<PayphoneClaimRecord | null>
+  markNeedsReversal(id: string, transactionId: string): Promise<unknown>
+  claimReversal(id: string): Promise<PayphoneClaimRecord | null>
+  releaseReversal(id: string): Promise<unknown>
+  markReversed(id: string): Promise<unknown>
+  markRejected(id: string): Promise<unknown>
   markCaptured(
     clientTransactionId: string,
     transactionId: string,
@@ -143,23 +149,44 @@ export async function settlePayphonePayment(
     fail("cart_changed", charge)
   }
 
+  const attached = await deps.claims.attachTransactionId(
+    claimed.id,
+    String(input.payphoneTransactionId)
+  )
+  if (attached === "duplicate") {
+    await deps.claims.releaseProcessing(claimed.id)
+    fail("client", "none")
+  }
+
   let transaction: PayphoneTransaction
 
   try {
-    transaction = await confirmedTransaction(deps, input, split.amount)
+    transaction = await deps.client.confirm(
+      input.payphoneTransactionId,
+      input.sessionId
+    )
   } catch (error) {
-    await deps.claims.markRejected(claimed.id)
-    if (error instanceof MedusaError) {
+    if (isPayphoneTransactionMissing(error)) {
+      await deps.claims.releaseProcessing(claimed.id)
       fail("failed", "none")
     }
 
-    fail("failed", "none")
+    fail("failed", "open")
   }
 
   const outcome = classifyTransaction(transaction)
-  if (outcome !== "approved") {
+  if (outcome === "declined" || outcome === "cancelled") {
     await deps.claims.markRejected(claimed.id)
-    fail(outcomeCode(outcome), "none")
+    fail(outcome === "cancelled" ? "cancelled" : "declined", "none")
+  }
+
+  if (outcome !== "approved") {
+    fail("pending", "open")
+  }
+
+  if (transaction.clientTransactionId !== input.sessionId) {
+    await deps.claims.releaseProcessing(claimed.id)
+    fail("client", "none")
   }
 
   const mismatch = confirmedMismatch(transaction, input.sessionId, split.amount)
@@ -173,13 +200,15 @@ export async function settlePayphonePayment(
   }
 
   const transactionId = transaction.transactionId ?? input.payphoneTransactionId
-  const attached = await deps.claims.attachTransactionId(
-    claimed.id,
-    String(transactionId)
-  )
-  if (attached === "duplicate") {
-    await deps.claims.markRejected(claimed.id)
-    fail("client", "none")
+  if (String(transactionId) !== String(input.payphoneTransactionId)) {
+    const moved = await deps.claims.attachTransactionId(
+      claimed.id,
+      String(transactionId)
+    )
+    if (moved === "duplicate") {
+      await deps.claims.releaseProcessing(claimed.id)
+      fail("client", "none")
+    }
   }
 
   const confirmed = buildConfirmedSessionData(
@@ -205,33 +234,25 @@ export async function settlePayphonePayment(
       fail("failed", "open")
     }
 
-    const charge = await tryReverse(deps, transactionId)
-    if (charge === "reversal_confirmed") {
-      await deps.claims.markReversed(claimed.id)
+    const charge = await finishReverse(deps, claimed.id, transactionId)
+    if (isDocumentError(error)) {
+      fail("document", charge)
     }
+
     fail("failed", charge)
   }
 
   if (!orderId) {
     await deps.claims.markNeedsReversal(claimed.id, String(transactionId))
-    const charge = await tryReverse(deps, transactionId)
-    if (charge === "reversal_confirmed") {
-      await deps.claims.markReversed(claimed.id)
-    }
+    const charge = await finishReverse(deps, claimed.id, transactionId)
     fail("failed", charge)
   }
 
-  try {
-    await deps.claims.markCaptured(
-      input.sessionId,
-      String(transactionId),
-      orderId
-    )
-  } catch {
-    deps.logger?.error?.(
-      "PayPhone claim stayed pending after the order was created."
-    )
-  }
+  await deps.claims.markCaptured(
+    input.sessionId,
+    String(transactionId),
+    orderId
+  )
 
   return {
     orderId,
@@ -245,12 +266,32 @@ async function reverseApprovedCharge(
   transactionId: number
 ): Promise<PayphoneChargeState> {
   await deps.claims.markNeedsReversal(claimId, String(transactionId))
+  return finishReverse(deps, claimId, transactionId)
+}
+
+async function finishReverse(
+  deps: SettlePayphoneDeps,
+  claimId: string,
+  transactionId: number
+): Promise<PayphoneChargeState> {
+  const claimed = await deps.claims.claimReversal(claimId)
+  if (!claimed) {
+    return "open"
+  }
+
   const charge = await tryReverse(deps, transactionId)
   if (charge === "reversal_confirmed") {
     await deps.claims.markReversed(claimId)
+    return charge
   }
 
+  await deps.claims.releaseReversal(claimId)
   return charge
+}
+
+function isDocumentError(error: unknown) {
+  const message = error instanceof Error ? error.message : ""
+  return /c[eé]dula/i.test(message) || /\bruc\b/i.test(message)
 }
 
 async function tryReverse(
@@ -319,32 +360,6 @@ function fail(code: PayphoneShopperCode, charge: PayphoneChargeState): never {
   throw error
 }
 
-async function confirmedTransaction(
-  deps: SettlePayphoneDeps,
-  input: SettlePayphoneInput,
-  amountCents: number
-) {
-  if (
-    isServerConfirmed(
-      input.sessionData,
-      input.sessionId,
-      input.payphoneTransactionId,
-      amountCents
-    )
-  ) {
-    return {
-      amount: amountCents,
-      clientTransactionId: input.sessionId,
-      statusCode: 3,
-      transactionStatus: "Approved",
-      transactionId: input.payphoneTransactionId,
-      currency: "USD",
-    } satisfies PayphoneTransaction
-  }
-
-  return deps.client.confirm(input.payphoneTransactionId, input.sessionId)
-}
-
 function confirmedMismatch(
   transaction: PayphoneTransaction,
   sessionId: string,
@@ -365,16 +380,3 @@ function confirmedMismatch(
   return null
 }
 
-function outcomeCode(
-  outcome: "cancelled" | "declined" | "pending"
-): PayphoneShopperCode {
-  if (outcome === "cancelled") {
-    return "cancelled"
-  }
-
-  if (outcome === "pending") {
-    return "pending"
-  }
-
-  return "declined"
-}

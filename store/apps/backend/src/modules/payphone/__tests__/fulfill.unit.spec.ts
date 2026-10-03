@@ -28,6 +28,18 @@ describe("readPayphoneNotification", () => {
       )
     ).toEqual({ action: "ack", errorCode: "666" })
   })
+
+  it("rejects a notification that omits StoreId when a store is configured", () => {
+    expect(
+      readPayphoneNotification(
+        {
+          ClientTransactionId: SESSION,
+          TransactionId: 9,
+        },
+        "store-1"
+      )
+    ).toEqual({ action: "ack", errorCode: "666" })
+  })
 })
 
 describe("fulfillPayphoneSale webhook", () => {

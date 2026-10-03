@@ -57,6 +57,7 @@ export const PayphoneResultCode = {
   client: "PAYPHONE_CLIENT",
   cartChanged: "PAYPHONE_CART_CHANGED",
   inProgress: "PAYPHONE_IN_PROGRESS",
+  document: "PAYPHONE_DOCUMENT",
 } as const
 
 export const PAYPHONE_SHOPPER_COPY = {
@@ -70,10 +71,10 @@ export const PAYPHONE_SHOPPER_COPY = {
     "El monto que confirmó PayPhone no coincide con tu pedido. No se creó el pedido.",
   currency: "La moneda del pago no es USD. No se creó el pedido.",
   client: "Esta transacción no corresponde a tu pedido. No se creó el pedido.",
-  cart_changed:
-    "Tu pedido cambió después de iniciar el pago. No se creó el pedido.",
+  cart_changed: "El total de tu carrito cambió",
   in_progress:
     "Este pago ya se está procesando. Espera un momento y no vuelvas a confirmar.",
+  document: "La cédula o el RUC no es válido.",
 } as const
 
 export type PayphoneShopperCode = keyof typeof PAYPHONE_SHOPPER_COPY
@@ -89,6 +90,7 @@ const SHOPPER_RESULT_CODE: Record<PayphoneShopperCode, string> = {
   client: PayphoneResultCode.client,
   cart_changed: PayphoneResultCode.cartChanged,
   in_progress: PayphoneResultCode.inProgress,
+  document: PayphoneResultCode.document,
 }
 
 export function payphoneShopperError(code: PayphoneShopperCode) {
@@ -207,27 +209,6 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
     const payWithCard = readString(current.pay_with_card)
     const payWithPayPhone = readString(current.pay_with_payphone)
     const urlsAreTrusted = trustedPayphoneUrls(payWithCard, payWithPayPhone)
-    const inputCents = toUsdCents(input.amount)
-
-    if (
-      previousCents != null &&
-      previousCents === inputCents &&
-      payphoneTransactionId &&
-      urlsAreTrusted &&
-      isServerConfirmed(current, sessionId, payphoneTransactionId, previousCents)
-    ) {
-      return {
-        status: PaymentSessionStatus.PENDING,
-        data: {
-          ...current,
-          ...confirmedSnapshot(current),
-          client_transaction_id: sessionId,
-          amount_cents: previousCents,
-          payphone_transaction_id: payphoneTransactionId,
-        },
-      }
-    }
-
     const split = splitForCharge(input.amount, current)
     const unchanged = previousCents === split.amount && urlsAreTrusted
 
@@ -241,20 +222,6 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
         cartTaxTotal: current.cart_tax_total,
         cartUntaxedTotal: current.cart_untaxed_total ?? 0,
       })
-
-      if (
-        payphoneTransactionId &&
-        isServerConfirmed(current, sessionId, payphoneTransactionId, split.amount)
-      ) {
-        return {
-          status: PaymentSessionStatus.PENDING,
-          data: {
-            ...next,
-            ...confirmedSnapshot(current),
-            payphone_transaction_id: payphoneTransactionId,
-          },
-        }
-      }
 
       return {
         status: PaymentSessionStatus.PENDING,
@@ -328,13 +295,6 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
         PayphoneResultCode.pending,
         "El pago en PayPhone todavía no se ha completado."
       )
-    }
-
-    if (isServerConfirmed(data, sessionId, payphoneId, expectedCents)) {
-      return {
-        status: PaymentSessionStatus.CAPTURED,
-        data,
-      }
     }
 
     let transaction: PayphoneTransaction
@@ -631,34 +591,6 @@ function sessionData(input: {
   }
 }
 
-export function isServerConfirmed(
-  data: SessionData,
-  sessionId: string,
-  payphoneId: number,
-  expectedCents: number
-): boolean {
-  return (
-    data.payphone_confirmed === true &&
-    data.transaction_status === "Approved" &&
-    readOptionalId(data.transaction_id) === payphoneId &&
-    readString(data.client_transaction_id) === sessionId &&
-    readNumber(data.amount_cents) === expectedCents
-  )
-}
-
-function confirmedSnapshot(data: SessionData): SessionData {
-  return {
-    payphone_confirmed: true,
-    transaction_status: "Approved",
-    transaction_id: data.transaction_id,
-    authorization_code: data.authorization_code,
-    transaction_date: data.transaction_date,
-    status_code: data.status_code,
-    card_brand: data.card_brand,
-    last_digits: data.last_digits,
-  }
-}
-
 export function buildConfirmedSessionData(
   previous: SessionData,
   transaction: PayphoneTransaction,
@@ -773,6 +705,10 @@ export function classifyPayphoneMessage(
 
   if (message.includes(PayphoneResultCode.cartChanged)) {
     return "cart_changed"
+  }
+
+  if (message.includes(PayphoneResultCode.document)) {
+    return "document"
   }
 
   if (message.includes(PayphoneResultCode.inProgress)) {

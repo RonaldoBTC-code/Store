@@ -2,7 +2,7 @@ import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 import {
   PAYPHONE_NO_CHARGE_COPY,
-  shopperReturnMessage,
+  shopperOutcomeMessage,
   shopperReturnState,
 } from "../../../../modules/payphone/return-state"
 import { PostPayphoneCompleteSchema } from "../../../middlewares"
@@ -45,7 +45,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       state,
       code: outcome.code,
       charge: outcome.charge,
-      message: shopperReturnMessage(outcome.charge),
+      message: shopperOutcomeMessage(outcome.code, outcome.charge),
     })
     return
   }

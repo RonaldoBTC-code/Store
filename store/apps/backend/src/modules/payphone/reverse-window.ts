@@ -2,6 +2,21 @@ const ECUADOR_OFFSET_HOURS = 5
 const REVERSE_DEADLINE_MINUTES = 20 * 60
 
 /**
+ * How long a `processing` claim may stay there before the reversal job
+ * treats the order attempt as finished. `settle` bounds `completeCartWorkflow`
+ * with a 25s timeout. Ten minutes is far above that, and it still fits inside
+ * the same-day Reverse window when the sale is confirmed well before 20:00
+ * America/Guayaquil.
+ */
+export const PROCESSING_GRACE_SECONDS = 10 * 60
+
+/**
+ * A `reversing` row older than this is recovered only after a PayPhone query.
+ * Longer than one Reverse call so a live attempt is not stolen.
+ */
+export const STALE_REVERSING_SECONDS = 5 * 60
+
+/**
  * PayPhone documents that API Reverse is only available on the same calendar
  * day as the sale, until 20:00 America/Guayaquil.
  * https://docs.payphone.app/api-reverse
@@ -36,6 +51,14 @@ export function payphoneReverseAllowed(
   }
 
   return current.minutes <= REVERSE_DEADLINE_MINUTES
+}
+
+/**
+ * Reverse is refused after 20:00 America/Guayaquil. Callers that do not have
+ * the sale timestamp still use this so they do not call Reverse at night.
+ */
+export function payphoneReverseWindowOpen(now: Date): boolean {
+  return ecuadorParts(now).minutes <= REVERSE_DEADLINE_MINUTES
 }
 
 function parsePayphoneDate(value: string): Date | null {

@@ -73,6 +73,15 @@ describe("Ecuador payment providers", () => {
     ).toThrow(/pp_system_default/)
   })
 
+  it("refuses to start when ALLOW_TEST_PAYMENTS is true in production", () => {
+    expect(() =>
+      assertManualProviderAllowedAtStartup([PAYPHONE_PROVIDER_ID], {
+        NODE_ENV: "production",
+        ALLOW_TEST_PAYMENTS: "true",
+      })
+    ).toThrow(/ALLOW_TEST_PAYMENTS/)
+  })
+
   it("starts in production when the manual provider is not enabled", () => {
     expect(() =>
       assertManualProviderAllowedAtStartup([PAYPHONE_PROVIDER_ID], {

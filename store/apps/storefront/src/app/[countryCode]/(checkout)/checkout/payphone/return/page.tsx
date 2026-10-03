@@ -1,16 +1,6 @@
-import { sdk } from "@lib/config"
-import { getAuthHeaders, getCartId, removeCartId } from "@lib/data/cookies"
-import { PAYPHONE_PENDING_NOTICE } from "@lib/payphone-return"
-import LocalizedClientLink from "@modules/common/components/localized-client-link"
+import { completePayphoneReturn } from "@lib/data/payphone"
+import { PayphoneReturnPoller } from "@modules/checkout/components/payphone-return/poller"
 import { redirect } from "next/navigation"
-
-type CompleteResponse = {
-  order_id?: string
-  country_code?: string
-  state?: "no_charge" | "confirming" | "approved"
-  code?: string
-  charge?: string
-}
 
 export default async function PayphoneReturnPage({
   params,
@@ -29,53 +19,46 @@ export default async function PayphoneReturnPage({
     redirect(`/${country}/checkout?step=payment&payphone=no_charge`)
   }
 
-  const cartId = await getCartId()
-  let result: CompleteResponse
+  const result = await completePayphoneReturn({
+    id: payphoneId,
+    clientTransactionId,
+  })
 
-  try {
-    result = await sdk.client.fetch<CompleteResponse>("/store/payphone/complete", {
-      method: "POST",
-      body: {
-        id: Number(payphoneId),
-        client_transaction_id: clientTransactionId,
-        ...(cartId ? { cart_id: cartId } : {}),
-      },
-      headers: {
-        ...(await getAuthHeaders()),
-      },
-      cache: "no-store",
-    })
-  } catch {
-    return <PendingNotice />
-  }
-
-  if (result.order_id && /^order_[A-Za-z0-9]+$/.test(result.order_id)) {
+  if (result?.order_id && /^order_[A-Za-z0-9]+$/.test(result.order_id)) {
     const orderCountry = safeCountry(result.country_code || country)
-    await removeCartId()
     redirect(`/${orderCountry}/order/${result.order_id}/confirmed`)
   }
 
-  if (result.state === "no_charge" || result.charge === "none" || result.charge === "reversal_confirmed") {
+  if (result?.code === "document") {
+    redirect(`/${country}/checkout?step=address&payphone=document`)
+  }
+
+  if (result?.code === "cart_changed") {
+    redirect(`/${country}/checkout?step=payment&payphone=cart_changed`)
+  }
+
+  if (result?.charge === "reversal_confirmed") {
+    return (
+      <PayphoneReturnPoller
+        country={country}
+        payphoneId={payphoneId}
+        clientTransactionId={clientTransactionId}
+        initial={result}
+      />
+    )
+  }
+
+  if (result?.charge === "none" || result?.state === "no_charge") {
     redirect(`/${country}/checkout?step=payment&payphone=no_charge`)
   }
 
-  return <PendingNotice />
-}
-
-function PendingNotice() {
   return (
-    <div className="content-container py-16">
-      <p className="text-xl" data-testid="payphone-pending">
-        {PAYPHONE_PENDING_NOTICE}
-      </p>
-      <LocalizedClientLink
-        href="/account/orders"
-        className="mt-6 inline-block underline"
-        data-testid="payphone-orders-link"
-      >
-        Tus pedidos
-      </LocalizedClientLink>
-    </div>
+    <PayphoneReturnPoller
+      country={country}
+      payphoneId={payphoneId}
+      clientTransactionId={clientTransactionId}
+      initial={result}
+    />
   )
 }
 

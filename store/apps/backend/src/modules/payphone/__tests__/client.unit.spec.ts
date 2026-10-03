@@ -62,6 +62,7 @@ describe("PayphoneClient", () => {
     expect(calls.every((call) => call.authorization === "Bearer test-token")).toBe(
       true
     )
+    expect(fetchImpl.mock.calls.every((call) => call[1]?.signal)).toBe(true)
     expect(calls[1].body).toEqual({ id: 5, clientTxId: "payses_01" })
     expect(calls[2].body).toEqual({ id: 5 })
     expect(calls[0].body).toMatchObject({

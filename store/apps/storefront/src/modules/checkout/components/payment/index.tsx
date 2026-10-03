@@ -29,7 +29,9 @@ import {
 } from "@modules/common/components/ui"
 import { HttpTypes } from "@medusajs/types"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+
+const PAYPHONE_NAVIGATION_MS = 4_000
 
 const Payment = ({
   cart,
@@ -53,6 +55,7 @@ const Payment = ({
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
+  const departTimer = useRef<number | null>(null)
 
   const isOpen = searchParams.get("step") === "payment"
   const payphoneCode = searchParams.get("payphone")
@@ -139,6 +142,10 @@ const Payment = ({
 
       leaving = true
       setDeparting(true)
+      departTimer.current = window.setTimeout(() => {
+        setDeparting(false)
+        setIsLoading(false)
+      }, PAYPHONE_NAVIGATION_MS)
       window.location.assign(target.toString())
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -187,6 +194,14 @@ const Payment = ({
   useEffect(() => {
     setError(null)
   }, [isOpen])
+
+  useEffect(() => {
+    return () => {
+      if (departTimer.current) {
+        window.clearTimeout(departTimer.current)
+      }
+    }
+  }, [])
 
   return (
     <div className="bg-ink-950 text-white">
@@ -307,6 +322,7 @@ const Payment = ({
               (isStripeLike(selectedPaymentMethod) && !paymentComplete) ||
               (!selectedPaymentMethod && !paidByGiftcard)
             }
+            aria-busy={isLoading || departing}
             data-testid="submit-payment-button"
           >
             {isPayphone(selectedPaymentMethod) ? (

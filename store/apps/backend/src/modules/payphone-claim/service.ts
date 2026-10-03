@@ -1,11 +1,17 @@
 import type { Context } from "@medusajs/framework/types"
 import {
+  ContainerRegistrationKeys,
   InjectManager,
   MedusaContext,
   MedusaError,
   MedusaService,
 } from "@medusajs/framework/utils"
+import { isAllowedClaimTransition } from "./claim-transitions"
 import PayphoneClaim from "./models/payphone-claim"
+
+const NO_ROW_WARNING = "PayPhone claim transition matched no row."
+const MANUAL_REVIEW_WARNING =
+  "PayPhone claim was not marked captured after an order existed. Manual review."
 
 type PendingClaim = {
   clientTransactionId: string
@@ -110,24 +116,48 @@ class PayphoneClaimModuleService extends MedusaService({
   }
 
   /**
-   * Records that an approved charge has no order. One statement, so a
-   * timeout after this commit still leaves a row the reversal job can see.
+   * Approved charge, no order yet. Only `processing` may enter
+   * `needs_reversal`. The transaction id is written in the same statement.
    */
   @InjectManager()
   async markNeedsReversal(
     id: string,
     transactionId: string,
     @MedusaContext() context: Context<SqlManager> = {}
-  ): Promise<void> {
-    const manager = requireManager(context)
-    await manager.transactional(async (em) => {
-      await em.getConnection().execute(
-        `update "payphone_claim" set "status" = 'needs_reversal', "transaction_id" = ?, "updated_at" = now() where "id" = ? and "status" in ('processing', 'needs_reversal') and "deleted_at" is null`,
-        [transactionId, id],
-        "run",
-        em.getTransactionContext()
-      )
-    })
+  ): Promise<PayphoneClaimRecord | null> {
+    return this.notice(
+      await transitionClaim(
+        context,
+        id,
+        "processing",
+        "needs_reversal",
+        `"status" = 'needs_reversal', "transaction_id" = ?`,
+        [transactionId]
+      ),
+      NO_ROW_WARNING
+    )
+  }
+
+  /**
+   * PayPhone has no such transaction, or the clientTransactionId is not ours.
+   * The same statement clears transaction_id so the charge is not reversed.
+   */
+  @InjectManager()
+  async releaseProcessing(
+    id: string,
+    @MedusaContext() context: Context<SqlManager> = {}
+  ): Promise<PayphoneClaimRecord | null> {
+    return this.notice(
+      await transitionClaim(
+        context,
+        id,
+        "processing",
+        "pending",
+        `"status" = 'pending', "transaction_id" = null`,
+        []
+      ),
+      NO_ROW_WARNING
+    )
   }
 
   @InjectManager()
@@ -144,75 +174,120 @@ class PayphoneClaimModuleService extends MedusaService({
     return mapSqlRow(rows[0])
   }
 
-  async markReversed(id: string): Promise<void> {
-    const [claim] = await this.listPayphoneClaims({ id })
-    if (!claim || (claim.status !== "reversing" && claim.status !== "needs_reversal")) {
-      return
-    }
+  @InjectManager()
+  async markReversed(
+    id: string,
+    @MedusaContext() context: Context<SqlManager> = {}
+  ): Promise<PayphoneClaimRecord | null> {
+    return this.notice(
+      await transitionClaim(
+        context,
+        id,
+        "reversing",
+        "reversed",
+        `"status" = 'reversed'`,
+        []
+      ),
+      NO_ROW_WARNING
+    )
+  }
 
-    await this.updatePayphoneClaims({
-      id,
-      status: "reversed",
+  @InjectManager()
+  async releaseReversal(
+    id: string,
+    @MedusaContext() context: Context<SqlManager> = {}
+  ): Promise<PayphoneClaimRecord | null> {
+    return this.notice(
+      await transitionClaim(
+        context,
+        id,
+        "reversing",
+        "needs_reversal",
+        `"status" = 'needs_reversal'`,
+        []
+      ),
+      NO_ROW_WARNING
+    )
+  }
+
+  @InjectManager()
+  async listProcessingPastGrace(
+    graceSeconds: number,
+    @MedusaContext() context: Context<SqlManager> = {}
+  ): Promise<PayphoneClaimRecord[]> {
+    return listStatusBefore(context, "processing", graceSeconds, true)
+  }
+
+  @InjectManager()
+  async listNeedsReversal(
+    @MedusaContext() context: Context<SqlManager> = {}
+  ): Promise<PayphoneClaimRecord[]> {
+    const rows = await runSql(
+      context,
+      `select * from "payphone_claim" where "status" = 'needs_reversal' and "deleted_at" is null`,
+      []
+    )
+
+    return rows.flatMap((row) => {
+      const mapped = mapSqlRow(row)
+      return mapped ? [mapped] : []
     })
   }
 
-  async releaseReversal(id: string): Promise<void> {
-    const [claim] = await this.listPayphoneClaims({ id })
-    if (!claim || claim.status !== "reversing") {
-      return
-    }
-
-    await this.updatePayphoneClaims({
-      id,
-      status: "needs_reversal",
-    })
+  @InjectManager()
+  async listStaleReversing(
+    staleSeconds: number,
+    @MedusaContext() context: Context<SqlManager> = {}
+  ): Promise<PayphoneClaimRecord[]> {
+    return listStatusBefore(context, "reversing", staleSeconds, false)
   }
 
-  async listReversalWork(graceSeconds: number): Promise<PayphoneClaimRecord[]> {
-    const ready = await this.listPayphoneClaims({ status: "needs_reversal" })
-    const processing = await this.listPayphoneClaims({ status: "processing" })
-    const cutoff = Date.now() - graceSeconds * 1000
-
-    for (const claim of processing) {
-      if (!claim.transaction_id) {
-        continue
-      }
-
-      const updated = new Date(claim.updated_at).getTime()
-      if (updated >= cutoff) {
-        continue
-      }
-
-      await this.markNeedsReversal(claim.id, String(claim.transaction_id))
-    }
-
-    const rows =
-      processing.length > 0
-        ? await this.listPayphoneClaims({ status: "needs_reversal" })
-        : ready
-
-    return rows.map((claim) => mapEntity(claim))
-  }
-
+  @InjectManager()
   async markCaptured(
     clientTransactionId: string,
     transactionId: string,
-    orderId: string
+    orderId: string,
+    @MedusaContext() context: Context<SqlManager> = {}
   ): Promise<void> {
     const [claim] = await this.listPayphoneClaims({
       client_transaction_id: clientTransactionId,
     })
 
     if (!claim) {
+      this.warn(MANUAL_REVIEW_WARNING)
       return
     }
 
-    await this.updatePayphoneClaims({
-      id: claim.id,
-      transaction_id: transactionId,
-      order_id: orderId,
-      status: "captured",
-    })
+    this.notice(
+      await transitionClaim(
+        context,
+        claim.id,
+        "processing",
+        "captured",
+        `"status" = 'captured', "transaction_id" = ?, "order_id" = ?`,
+        [transactionId, orderId]
+      ),
+      orderId ? MANUAL_REVIEW_WARNING : NO_ROW_WARNING
+    )
+  }
+
+  @InjectManager()
+  async captureFromReversing(
+    id: string,
+    orderId: string,
+    @MedusaContext() context: Context<SqlManager> = {}
+  ): Promise<PayphoneClaimRecord | null> {
+    return this.notice(
+      await transitionClaim(
+        context,
+        id,
+        "reversing",
+        "captured",
+        `"status" = 'captured', "order_id" = ?`,
+        [orderId]
+      ),
+      orderId ? MANUAL_REVIEW_WARNING : NO_ROW_WARNING
+    )
   }
 
   async getByClientTransactionId(
@@ -235,18 +310,92 @@ class PayphoneClaimModuleService extends MedusaService({
     return claim ? mapEntity(claim) : null
   }
 
-  async markRejected(id: string): Promise<void> {
-    const [claim] = await this.listPayphoneClaims({ id })
-    if (!claim || claim.status === "captured" || claim.status === "reversed") {
-      return
-    }
-
-    await this.updatePayphoneClaims({
-      id,
-      status: "rejected",
-    })
+  @InjectManager()
+  async markRejected(
+    id: string,
+    @MedusaContext() context: Context<SqlManager> = {}
+  ): Promise<PayphoneClaimRecord | null> {
+    return this.notice(
+      await transitionClaim(
+        context,
+        id,
+        "processing",
+        "rejected",
+        `"status" = 'rejected'`,
+        []
+      ),
+      NO_ROW_WARNING
+    )
   }
 
+  private notice(
+    updated: PayphoneClaimRecord | null,
+    emptyWarning: string
+  ): PayphoneClaimRecord | null {
+    if (!updated) {
+      this.warn(emptyWarning)
+    }
+
+    return updated
+  }
+
+  private warn(message: string) {
+    const record = this as unknown as {
+      container_?: { resolve?: (key: string) => { warn?: (message: string) => void } }
+      container?: { resolve?: (key: string) => { warn?: (message: string) => void } }
+    }
+    const container = record.container_ ?? record.container
+
+    try {
+      container?.resolve?.(ContainerRegistrationKeys.LOGGER)?.warn?.(message)
+    } catch {
+      return
+    }
+  }
+
+}
+
+async function transitionClaim(
+  context: Context<SqlManager>,
+  id: string,
+  from: string,
+  to: string,
+  assignments: string,
+  params: unknown[]
+): Promise<PayphoneClaimRecord | null> {
+  if (!isAllowedClaimTransition(from, to)) {
+    return null
+  }
+
+  const rows = await runSql(
+    context,
+    `update "payphone_claim" set ${assignments}, "updated_at" = now() where "id" = ? and "status" = ? and "deleted_at" is null returning *`,
+    [...params, id, from]
+  )
+
+  return mapSqlRow(rows[0])
+}
+
+async function listStatusBefore(
+  context: Context<SqlManager>,
+  status: "processing" | "reversing",
+  ageSeconds: number,
+  requireTransactionId: boolean
+): Promise<PayphoneClaimRecord[]> {
+  const cutoff = new Date(Date.now() - ageSeconds * 1000).toISOString()
+  const transactionSql = requireTransactionId
+    ? ` and "transaction_id" is not null`
+    : ""
+  const rows = await runSql(
+    context,
+    `select * from "payphone_claim" where "status" = ? and "deleted_at" is null and "updated_at" <= ?${transactionSql}`,
+    [status, cutoff]
+  )
+
+  return rows.flatMap((row) => {
+    const mapped = mapSqlRow(row)
+    return mapped ? [mapped] : []
+  })
 }
 
 async function runSql(

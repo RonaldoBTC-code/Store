@@ -1,8 +1,15 @@
 export const PAYPHONE_NO_CHARGE_COPY =
   "No se completó el pago. No se te cobró nada."
 
+export const PAYPHONE_REVERSED_COPY =
+  "No se completó el pago. Ya anulamos el cobro en PayPhone."
+
 export const PAYPHONE_PENDING_NOTICE =
-  "Estamos confirmando tu pago con PayPhone. Te avisaremos por correo apenas se confirme."
+  "Estamos confirmando tu pago con PayPhone. No vuelvas a pagar. Esta página se actualiza sola en unos minutos."
+
+export const PAYPHONE_CART_CHANGED_COPY = "El total de tu carrito cambió"
+
+export const PAYPHONE_DOCUMENT_COPY = "La cédula o el RUC no es válido."
 
 export const PAYPHONE_CONFIRMING_COPY = "Confirmando tu pago…"
 
@@ -26,7 +33,28 @@ export function shopperReturnState(
 }
 
 export function shopperReturnMessage(charge: PayphoneChargeState): string {
-  return shopperReturnState(charge) === "no_charge"
-    ? PAYPHONE_NO_CHARGE_COPY
-    : PAYPHONE_PENDING_NOTICE
+  if (charge === "reversal_confirmed") {
+    return PAYPHONE_REVERSED_COPY
+  }
+
+  if (charge === "none") {
+    return PAYPHONE_NO_CHARGE_COPY
+  }
+
+  return PAYPHONE_PENDING_NOTICE
+}
+
+export function shopperOutcomeMessage(
+  code: string,
+  charge: PayphoneChargeState
+): string {
+  if (code === "document") {
+    return PAYPHONE_DOCUMENT_COPY
+  }
+
+  if (code === "cart_changed") {
+    return PAYPHONE_CART_CHANGED_COPY
+  }
+
+  return shopperReturnMessage(charge)
 }
