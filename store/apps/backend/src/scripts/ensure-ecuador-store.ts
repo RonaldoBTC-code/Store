@@ -197,6 +197,11 @@ const isDuplicateLinkError = (error: unknown) => {
  * On a database that already has store defaults, currencies, or a default
  * tax rate, those values are left in place. pp_system_default is added only
  * when the Ecuador region has no payment provider yet.
+ *
+ * Zone cleanup creates the Ecuador shipping option first, then deletes.
+ * Those are separate workflows, so this is not one transaction. A failed
+ * delete leaves the Ecuador option in place, and the next run continues
+ * with whatever zones and options remain.
  */
 export default async function ensureEcuadorStore({
   container,
@@ -243,15 +248,6 @@ export default async function ensureEcuadorStore({
   await removeMisplacedEcuadorZones(container, query, logger, {
     ecuadorLocationId: locationId,
     ecuadorServiceZoneId: serviceZoneId,
-    restoreShipping: () =>
-      ensureShippingOption(
-        container,
-        query,
-        logger,
-        serviceZoneId,
-        shippingProfileId,
-        region.id
-      ),
   })
   await ensureLocationSalesChannel(
     container,
@@ -886,7 +882,6 @@ async function removeMisplacedEcuadorZones(
   input: {
     ecuadorLocationId: string
     ecuadorServiceZoneId: string
-    restoreShipping: () => Promise<void>
   }
 ) {
   const { data } = await query.graph({
@@ -973,9 +968,12 @@ async function removeMisplacedEcuadorZones(
     logger.info(`Deleted misplaced Ecuador zones. ${idLog}.`)
   } catch (error) {
     logger.warn(
-      `Zone cleanup failed. Restoring Ecuador shipping if needed. ${idLog}.`
+      [
+        "Zone cleanup stopped. Each delete workflow commits on its own, so this was not rolled back as one transaction.",
+        `Ecuador shipping option ids ${ecuadorOptionIds.join(", ") || "none"} were created first and were not part of the delete.`,
+        `Re-run the setup to continue. ${idLog}.`,
+      ].join(" ")
     )
-    await input.restoreShipping()
     throw error
   }
 }
