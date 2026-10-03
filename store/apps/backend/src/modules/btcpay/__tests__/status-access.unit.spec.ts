@@ -1,8 +1,10 @@
 import {
+  allowStatusRequest,
   callerOwnsCart,
   hashRateLimitKey,
   publicStatus,
   readStatusQuery,
+  resetStatusRateLimiters,
   StatusRateLimiter,
 } from "../status-access"
 
@@ -96,5 +98,18 @@ describe("BTCPay status access", () => {
     expect(limiter.allow(ip, 1_100)).toBe(true)
     expect(limiter.allow(ip, 1_200)).toBe(false)
     expect(limiter.allow(ip, 62_000)).toBe(true)
+  })
+
+  it("resets the shared status limiter map", () => {
+    const env = {
+      BTCPAY_STATUS_MAX_REQUESTS: "1",
+      BTCPAY_STATUS_WINDOW_SECONDS: "60",
+    } as NodeJS.ProcessEnv
+    resetStatusRateLimiters()
+    expect(allowStatusRequest(["ip:one"], 1_000, env)).toBe(true)
+    expect(allowStatusRequest(["ip:one"], 1_100, env)).toBe(false)
+    resetStatusRateLimiters()
+    expect(allowStatusRequest(["ip:one"], 1_200, env)).toBe(true)
+    resetStatusRateLimiters()
   })
 })

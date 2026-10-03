@@ -169,7 +169,7 @@ Behind Cloudflare or another reverse proxy, `req.ip` is the proxy address until 
 | Poll limit | 429 | `{ "state": "limit_reached", "message": "Demasiadas consultas. Espera un momento e inténtalo de nuevo." }` |
 | Store id, cents, currency, or cart does not match the row | 200 | `{ "state": "mismatch", "message": "El pago no coincide con este carrito." }` |
 | Cart total changed | 200 | `{ "state": "cart_changed", "message": "El total del carrito cambió. Vuelve al checkout para generar un nuevo pago." }` |
-| Missing cart, or the session is not this caller's | 200 | `{ "state": "failed", "message": "No encontramos el carrito." }` |
+| Missing cart id or session, an unknown cart, or a cart this caller does not own | 404 | `{ "state": "failed", "message": "No encontramos el carrito." }` |
 | BTCPay env is unset | 200 | `{ "state": "failed", "message": "Los pagos con Bitcoin no están habilitados." }` |
 | Cart is not Ecuador | 200 | `{ "state": "failed", "message": "Bitcoin solo está disponible para Ecuador." }` |
 | Cart has no BTCPay session | 200 | `{ "state": "failed", "message": "Este carrito no tiene un pago con Bitcoin." }` |
@@ -183,7 +183,7 @@ The return page builds its own sentence from `state`. It does not render `messag
 | `settled` with `order_id` | Redirect to `/{country}/order/{order_id}/confirmed` | none |
 | `expired`, `invalid` | A short closed sentence, `data-testid="btcpay-payment-error"` | **Intentar de nuevo** → `/{country}/checkout?step=payment` |
 | `cart_changed`, `mismatch` | A short sentence, error test id | **Volver al checkout** |
-| `failed` | **No encontramos el pago.** | **Ir a la tienda** |
+| `failed` | **No encontramos el pago.** A 404 from this route is the same state. Unknown and foreign carts share that 404 body, so the response does not say whether the cart exists. | **Ir a la tienda** |
 | `partial` | **Recibimos un pago menor al total, así que no creamos tu pedido. No vuelvas a pagar esta factura. Escríbenos para devolverte lo que enviaste.** Neutral notice, not the error test id | `TODO(contacto)` |
 | `paid_late` | Neutral notice: the payment arrived after the deadline, the order was not created automatically, and the next step is a review | `TODO(contacto)` |
 | `paid_over` | Neutral notice: the payment is above the total, the order was not created automatically, and the next step is a review | `TODO(contacto)` |
@@ -294,7 +294,7 @@ Not verified against a running BTCPay Server or with real funds:
 - A live webhook delivery, including the exact JSON field set (`deliveryId`, `invoiceId`, `type`, `storeId`, `metadata`). Those names come from BTCPay's own issue reports and from the re-fetched invoice, which is what we act on. The rendered OpenAPI page at <https://docs.btcpayserver.org/API/Greenfield/v1/> did not load as static HTML.
 - Whether every BTCPay version echoes custom metadata keys (`cartId`, `paymentSessionId`, `amountCents`) unchanged on `GET` invoice. If a version drops them, the webhook will not authorize and the return page will show a mismatch instead of completing the order.
 - The modal script and its `postMessage` statuses (`complete`, `paid`, `expired`). They are quoted from the ecommerce guide only.
-- End-to-end checkout in a browser, or `medusa db:migrate` on a production database. Unit tests cover the provider with a mocked HTTP client. Postgres integration tests apply the migrations, including `down`, and check concurrent cart inserts, the session advisory lock, HMAC storage, 30-day redaction, and one claim when webhook and return confirmation run together. The claim unique index is `IDX_btcpay_invoice_claim_invoice_id_unique`. The payment unique index is `IDX_btcpay_payment_provider_invoice_id_unique`.
+- End-to-end checkout in a browser, or `medusa db:migrate` on a production database. Unit tests cover the provider with a mocked HTTP client. Postgres integration tests live in `integration-tests/http` and run with the backend HTTP integration suite. They connect only through `BTCPAY_TEST_DATABASE_URL`, never `DATABASE_URL`. Before any `DROP`, the URL must be localhost (`127.0.0.1` and `DB_HOST=127.0.0.1` are rewritten to `localhost`) and the database name must be `btcpay_test`. They apply the migrations, including `down`, and check concurrent cart inserts, the session advisory lock, HMAC storage, 30-day redaction, row counts for close, commit, and confirm, a late `Expired` close on a settled row, and one claim when webhook and return confirmation run together. The claim unique index is `IDX_btcpay_invoice_claim_invoice_id_unique`. The payment unique index is `IDX_btcpay_payment_provider_invoice_id_unique`.
 - A live invoice `expirationTime` payload. The countdown reads that field when BTCPay sends a unix timestamp or an ISO date. The 15 minute fallback is the store FAQ default, not a value measured on an instance.
 - Inventory reservation against a running Medusa database. The provider calls the inventory module when a sales channel has a stock location and the variant manages inventory. Unit tests assert that a blocked invoice never calls that reservation step.
 - The deployment FAQ's 2 GB / 80 GB numbers versus the Docker specs page's 4 GB / 2 cores / 50 GB starting point. Both are linked above; the specs page is the one to follow.

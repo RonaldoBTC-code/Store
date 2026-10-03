@@ -14,10 +14,9 @@ import {
   btcpayMigrationDown,
   btcpayMigrationUp,
 } from "../../src/modules/btcpay-claim/migrations/sql"
+import { btcpayTestDatabaseUrl } from "../../src/modules/btcpay/test-database"
 
 const SECRET = "server-secret"
-const DATABASE_URL =
-  process.env.BTCPAY_TEST_DATABASE_URL || process.env.DATABASE_URL || ""
 
 type QueryResult = { rows: Record<string, unknown>[] }
 
@@ -30,6 +29,30 @@ type PgPool = {
   query(sql: string, params?: unknown[]): Promise<QueryResult>
   connect(): Promise<PgClient>
   end(): Promise<void>
+}
+
+async function waitForAdvisoryLock(
+  pool: PgPool,
+  pid: number,
+  finished: () => boolean
+): Promise<{ wait_event_type: string; wait_event: string }> {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    if (finished()) {
+      throw new Error("second acquire finished before the advisory lock was observed")
+    }
+    const activity = await pool.query(
+      `SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE pid = $1`,
+      [pid]
+    )
+    const row = activity.rows[0]
+    const event = String(row?.wait_event ?? "").toLowerCase()
+    if (row?.wait_event_type === "Lock" && event.includes("advisory")) {
+      return { wait_event_type: String(row.wait_event_type), wait_event: event }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  throw new Error("timed out waiting for the advisory lock in pg_stat_activity")
 }
 
 function createPool(connectionString: string): PgPool {
@@ -74,12 +97,8 @@ describe("BTCPay Postgres constraints", () => {
   let pool: PgPool
 
   beforeAll(async () => {
-    if (!DATABASE_URL) {
-      throw new Error(
-        "BTCPay Postgres integration tests need BTCPAY_TEST_DATABASE_URL or DATABASE_URL."
-      )
-    }
-    pool = createPool(DATABASE_URL)
+    const connectionString = btcpayTestDatabaseUrl()
+    pool = createPool(connectionString)
     await pool.query(`DROP TABLE IF EXISTS "btcpay_payment" CASCADE`)
     await pool.query(`DROP TABLE IF EXISTS "btcpay_invoice_claim" CASCADE`)
     await runAll(pool, btcpayMigrationUp)
@@ -181,6 +200,8 @@ describe("BTCPay Postgres constraints", () => {
   it("holds the session advisory lock until the insert transaction commits", async () => {
     const clientA = await pool.connect()
     const clientB = await pool.connect()
+    let secondDone = false
+    let secondPromise: Promise<{ ok: boolean }> = Promise.resolve({ ok: true })
     try {
       await clientA.query("BEGIN")
       const first = await acquirePaymentSlot(
@@ -190,8 +211,7 @@ describe("BTCPay Postgres constraints", () => {
       expect(first.ok).toBe(true)
       await clientB.query("BEGIN")
       const pid = await clientB.query(`SELECT pg_backend_pid() AS pid`)
-      let secondDone = false
-      const secondPromise = (async () => {
+      secondPromise = (async () => {
         const second = await acquirePaymentSlot(
           pgTx(clientB),
           acquireInput({ cartId: "cart_s2", sessionId: "payses_same" })
@@ -200,20 +220,17 @@ describe("BTCPay Postgres constraints", () => {
         secondDone = true
         return second
       })()
-      await new Promise((resolve) => setTimeout(resolve, 400))
+      const activity = await waitForAdvisoryLock(pool, Number(pid.rows[0].pid), () => secondDone)
       expect(secondDone).toBe(false)
-      const activity = await pool.query(
-        `SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE pid = $1`,
-        [pid.rows[0].pid]
-      )
-      expect(activity.rows[0]?.wait_event_type).toBe("Lock")
-      expect(String(activity.rows[0]?.wait_event).toLowerCase()).toContain("advisory")
+      expect(activity.wait_event_type).toBe("Lock")
+      expect(activity.wait_event).toContain("advisory")
       await clientA.query("COMMIT")
       const second = await secondPromise
       expect(second.ok).toBe(false)
     } finally {
       await clientA.query("ROLLBACK").catch(() => undefined)
       await clientB.query("ROLLBACK").catch(() => undefined)
+      await secondPromise.catch(() => undefined)
       clientA.release()
       clientB.release()
     }
@@ -376,6 +393,16 @@ describe("BTCPay Postgres constraints", () => {
     expect(row.rows).toHaveLength(1)
     expect(row.rows[0].status).toBe("settled")
     expect(row.rows[0].reservation_ids).toEqual({ ids: ["res_keep"] })
+    const counts = await pool.query(
+      `SELECT
+         count(*) FILTER (WHERE "status" = 'settled')::int AS settled,
+         count(*) FILTER (WHERE "status" = 'expired')::int AS expired
+       FROM "btcpay_payment"
+       WHERE "invoice_id" = $1`,
+      [invoiceId]
+    )
+    expect(counts.rows[0].settled).toBe(1)
+    expect(counts.rows[0].expired).toBe(0)
   })
 
   it("does not revive a holding row that is no longer holding", async () => {
@@ -414,6 +441,128 @@ describe("BTCPay Postgres constraints", () => {
     )
     expect(row.rows[0].status).toBe("expired")
     expect(row.rows[0].invoice_id).toBeNull()
+    const revived = await pool.query(
+      `SELECT count(*)::int AS count FROM "btcpay_payment" WHERE "invoice_id" = 'inv_too_late'`
+    )
+    expect(revived.rows[0].count).toBe(0)
+  })
+
+  it("counts rows changed by close, commit, and confirm", async () => {
+    const invoiceId = "inv_counts"
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const acquired = await acquirePaymentSlot(
+        pgTx(client),
+        acquireInput({ cartId: "cart_counts", sessionId: "payses_counts" })
+      )
+      expect(acquired.ok).toBe(true)
+      if (!acquired.ok) {
+        return
+      }
+      const stored = await commitOpenInvoice(pgTx(client), {
+        id: acquired.id,
+        invoiceId,
+        expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+        reservationIds: ["res_count"],
+      })
+      expect(stored).toBe(true)
+      const pending = await client.query(
+        `SELECT count(*)::int AS count
+         FROM "btcpay_payment"
+         WHERE "id" = $1 AND "status" = 'pending' AND "invoice_id" = $2`,
+        [acquired.id, invoiceId]
+      )
+      expect(pending.rows[0].count).toBe(1)
+
+      const again = await commitOpenInvoice(pgTx(client), {
+        id: acquired.id,
+        invoiceId: "inv_counts_again",
+        expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+        reservationIds: ["res_again"],
+      })
+      expect(again).toBe(false)
+      const notRewritten = await client.query(
+        `SELECT count(*)::int AS count FROM "btcpay_payment" WHERE "invoice_id" = 'inv_counts_again'`
+      )
+      expect(notRewritten.rows[0].count).toBe(0)
+
+      await confirmSettlement(pgTx(client), {
+        id: newClaimId(),
+        invoiceId,
+        cartId: "cart_counts",
+        paymentSessionHash: hashSessionId("payses_counts", SECRET),
+        amountCents: 2500,
+        currencyCode: "usd",
+      })
+      const confirmed = await client.query(
+        `SELECT
+           (SELECT count(*)::int FROM "btcpay_payment" WHERE "invoice_id" = $1 AND "status" = 'settled') AS payments,
+           (SELECT count(*)::int FROM "btcpay_invoice_claim" WHERE "invoice_id" = $1) AS claims`,
+        [invoiceId]
+      )
+      expect(confirmed.rows[0].payments).toBe(1)
+      expect(confirmed.rows[0].claims).toBe(1)
+
+      await expect(
+        confirmSettlement(pgTx(client), {
+          id: newClaimId(),
+          invoiceId,
+          cartId: "cart_counts",
+          paymentSessionHash: hashSessionId("payses_counts", SECRET),
+          amountCents: 2500,
+          currencyCode: "usd",
+        })
+      ).rejects.toBeInstanceOf(PaymentNotOpenError)
+      const claimsAfter = await client.query(
+        `SELECT count(*)::int AS count FROM "btcpay_invoice_claim" WHERE "invoice_id" = $1`,
+        [invoiceId]
+      )
+      expect(claimsAfter.rows[0].count).toBe(1)
+
+      const released = await closeOpenPayment(pgTx(client), invoiceId, "expired")
+      expect(released).toEqual([])
+      const stillSettled = await client.query(
+        `SELECT
+           count(*) FILTER (WHERE "status" = 'settled')::int AS settled,
+           count(*) FILTER (WHERE "status" = 'expired')::int AS expired
+         FROM "btcpay_payment"
+         WHERE "invoice_id" = $1`,
+        [invoiceId]
+      )
+      expect(stillSettled.rows[0].settled).toBe(1)
+      expect(stillSettled.rows[0].expired).toBe(0)
+
+      const openInvoice = "inv_counts_open"
+      const open = await acquirePaymentSlot(
+        pgTx(client),
+        acquireInput({ cartId: "cart_counts_open", sessionId: "payses_counts_open" })
+      )
+      expect(open.ok).toBe(true)
+      if (!open.ok) {
+        return
+      }
+      expect(
+        await commitOpenInvoice(pgTx(client), {
+          id: open.id,
+          invoiceId: openInvoice,
+          expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+          reservationIds: ["res_open"],
+        })
+      ).toBe(true)
+      expect(await closeOpenPayment(pgTx(client), openInvoice, "expired")).toEqual(["res_open"])
+      const closed = await client.query(
+        `SELECT count(*)::int AS count
+         FROM "btcpay_payment"
+         WHERE "invoice_id" = $1 AND "status" = 'expired'`,
+        [openInvoice]
+      )
+      expect(closed.rows[0].count).toBe(1)
+      await client.query("COMMIT")
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined)
+      client.release()
+    }
   })
 
   it("drops both tables on down and recreates the final schema", async () => {

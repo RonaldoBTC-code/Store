@@ -221,6 +221,46 @@ describe("BTCPay payment provider", () => {
     expect(stock.release).not.toHaveBeenCalled()
   })
 
+  it("does not authorize a settled late invoice", async () => {
+    const client = mockClient()
+    client.getInvoice.mockResolvedValue(
+      invoice({ status: "Settled", additionalStatus: "PaidLate" })
+    )
+    const stock = stockRecorder()
+    const warnings: string[] = []
+    const { service } = await ready(client, {
+      stock,
+      logger: { warn: (message) => warnings.push(message) },
+    })
+
+    await expect(service.authorizePayment({ data: sessionData() })).rejects.toThrow(
+      /cannot be authorized/
+    )
+
+    expect(warnings).toEqual(["BTCPay confirmation rejected: paid_late"])
+    expect(stock.release).not.toHaveBeenCalled()
+  })
+
+  it("does not authorize a settled invoice that is only partially paid", async () => {
+    const client = mockClient()
+    client.getInvoice.mockResolvedValue(
+      invoice({ status: "Settled", additionalStatus: "PaidPartial" })
+    )
+    const stock = stockRecorder()
+    const warnings: string[] = []
+    const { service } = await ready(client, {
+      stock,
+      logger: { warn: (message) => warnings.push(message) },
+    })
+
+    await expect(service.authorizePayment({ data: sessionData() })).rejects.toThrow(
+      /cannot be authorized/
+    )
+
+    expect(warnings).toEqual(["BTCPay confirmation rejected: partial"])
+    expect(stock.release).toHaveBeenCalledTimes(1)
+  })
+
   it("does not authorize an expired invoice", async () => {
     const client = mockClient()
     client.getInvoice.mockResolvedValue(
@@ -457,17 +497,21 @@ describe("BTCPay payment provider", () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
       new Response(`unauthorized token test-key ${SECRET}`, { status: 401 })
     )
-    const http = new BtcpayHttpClient({
-      url: ORIGIN,
-      storeId: "store123",
-      apiKey: "test-key",
-    })
-    const httpMessage = await rejectionOf(http.getInvoice("inv123"))
-    fetchMock.mockRestore()
-    if (previousWebhookSecret == null) {
-      delete process.env.BTCPAY_WEBHOOK_SECRET
-    } else {
-      process.env.BTCPAY_WEBHOOK_SECRET = previousWebhookSecret
+    let httpMessage = ""
+    try {
+      const http = new BtcpayHttpClient({
+        url: ORIGIN,
+        storeId: "store123",
+        apiKey: "test-key",
+      })
+      httpMessage = await rejectionOf(http.getInvoice("inv123"))
+    } finally {
+      fetchMock.mockRestore()
+      if (previousWebhookSecret == null) {
+        delete process.env.BTCPAY_WEBHOOK_SECRET
+      } else {
+        process.env.BTCPAY_WEBHOOK_SECRET = previousWebhookSecret
+      }
     }
 
     expect(httpMessage).not.toContain("test-key")

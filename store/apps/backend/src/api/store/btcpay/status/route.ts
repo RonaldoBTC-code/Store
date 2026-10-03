@@ -73,7 +73,7 @@ export async function GET(req: MedusaStoreRequest, res: MedusaResponse) {
   }
 
   if (!lookup.cartId || !lookup.paymentSessionId) {
-    res.json(publicStatus({ state: "failed", message: STATUS_NOT_FOUND }))
+    res.status(404).json(publicStatus({ state: "failed", message: STATUS_NOT_FOUND }))
     return
   }
 
@@ -113,7 +113,7 @@ export async function GET(req: MedusaStoreRequest, res: MedusaResponse) {
       cartSessionId: session?.id ?? null,
     })
   ) {
-    res.json(publicStatus({ state: "failed", message: STATUS_NOT_FOUND }))
+    res.status(404).json(publicStatus({ state: "failed", message: STATUS_NOT_FOUND }))
     return
   }
 
@@ -132,7 +132,7 @@ export async function GET(req: MedusaStoreRequest, res: MedusaResponse) {
   }
 
   if (!session) {
-    res.json(publicStatus({ state: "failed", message: STATUS_NOT_FOUND }))
+    res.status(404).json(publicStatus({ state: "failed", message: STATUS_NOT_FOUND }))
     return
   }
 

@@ -133,6 +133,11 @@ export class StatusRateLimiter {
 
 const limiters = new Map<string, StatusRateLimiter>()
 
+/** Clears the process-wide limiter map so route tests do not share hits. */
+export function resetStatusRateLimiters(): void {
+  limiters.clear()
+}
+
 export function allowStatusRequest(
   keys: string[],
   now: number,

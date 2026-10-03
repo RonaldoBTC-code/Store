@@ -55,13 +55,32 @@ export async function getBtcpayPaymentState(cartId: string) {
     }
   }
 
-  return sdk.client.fetch<BtcpayPaymentState>("/store/btcpay/status", {
-    method: "GET",
-    query: {
-      cart_id: cookieCartId,
-      payment_session_id: session.id,
-    },
-    headers,
-    cache: "no-store",
-  })
+  try {
+    return await sdk.client.fetch<BtcpayPaymentState>("/store/btcpay/status", {
+      method: "GET",
+      query: {
+        cart_id: cookieCartId,
+        payment_session_id: session.id,
+      },
+      headers,
+      cache: "no-store",
+    })
+  } catch (error) {
+    if (isNotFound(error)) {
+      return {
+        state: "failed" as const,
+        message: "No encontramos el carrito.",
+      }
+    }
+    throw error
+  }
+}
+
+function isNotFound(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    (error as { status?: unknown }).status === 404
+  )
 }
