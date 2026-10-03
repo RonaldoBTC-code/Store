@@ -12,12 +12,10 @@ import {
 import {
   chooseShippingFulfillmentSet,
   DEFAULT_SHIPPING_PROFILE_NAME,
-  defaultShippingProfileNameConflict,
   ecuadorShippingProfileWarning,
-  matchDefaultShippingProfiles,
-  matchExactName,
   namedStockLocation,
   paymentProvidersForRegion,
+  planEcuadorSetup,
   planIva,
   planRegionCountries,
   planStoreCurrencies,
@@ -208,6 +206,13 @@ const isDuplicateLinkError = (error: unknown) => {
  * This runs from `medusa db:migrate` and from `pnpm seed:ec`. It is not
  * behind the product-seed guard, so a production migrate can create the
  * base store. Product and demo seeding stay gated separately.
+ * `FIX_EC_SHIPPING_PROFILE` is read here as well. It is not covered by the
+ * local-host guard. Only the explicit value `true` moves an option.
+ *
+ * Blocking conflicts are read before any workflow runs: a duplicate
+ * Default Sales Channel, more than one default shipping profile, a
+ * Default Shipping Profile name used by another type, and a country `ec`
+ * that cannot be attached. Those stops leave the database unchanged.
  *
  * On a database that already has store defaults, currencies, or a default
  * tax rate, those values are left in place. An existing region keeps its
@@ -228,12 +233,26 @@ export default async function ensureEcuadorStore({
 }) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
+  const setup = await preflightEcuadorStore(query)
+  if (setup.status === "blocked") {
+    throw new MedusaError(
+      setup.code === "not_allowed"
+        ? MedusaError.Types.NOT_ALLOWED
+        : MedusaError.Types.INVALID_DATA,
+      setup.message
+    )
+  }
+
   const link = container.resolve(ContainerRegistrationKeys.LINK)
   const fulfillmentModule = container.resolve(Modules.FULFILLMENT)
 
   logger.info("Ensuring Ecuador store setup (USD, IVA 15%, tax-inclusive)...")
 
-  const salesChannelId = await ensureSalesChannel(container, query, logger)
+  const salesChannelId = await ensureSalesChannel(
+    container,
+    logger,
+    setup.salesChannelId
+  )
   await ensurePublishableKey(container, query, logger, salesChannelId)
   const storeId = await ensureStore(container, query, logger, salesChannelId)
   const region = await ensureRegion(container, query, logger)
@@ -247,7 +266,11 @@ export default async function ensureEcuadorStore({
   )
   await ensureIva(container, query, logger)
   await ensureTaxInclusivePrices(container, query, logger, region.id)
-  const shippingProfileId = await ensureShippingProfile(container, query, logger)
+  const shippingProfileId = await ensureShippingProfile(
+    container,
+    logger,
+    setup.shippingProfileId
+  )
   const { locationId, serviceZoneId } = await ensureFulfillment(
     container,
     query,
@@ -288,24 +311,44 @@ export default async function ensureEcuadorStore({
   )
 }
 
-async function ensureSalesChannel(
-  container: MedusaContainer,
-  query: { graph: Function },
-  logger: { info: (message: string) => void }
-) {
-  const { data } = await query.graph({
+async function preflightEcuadorStore(query: { graph: Function }) {
+  const { data: channels } = await query.graph({
     entity: "sales_channel",
     fields: ["id", "name"],
   })
-  const channels = (data ?? []) as SalesChannelRecord[]
-  const match = matchExactName(channels, SALES_CHANNEL_NAME, "sales channel")
-  if (match.status === "duplicate") {
-    throw new MedusaError(MedusaError.Types.INVALID_DATA, match.message)
-  }
+  const { data: profiles } = await query.graph({
+    entity: "shipping_profile",
+    fields: ["id", "name", "type"],
+  })
+  const { data: regions } = await query.graph({
+    entity: "region",
+    fields: ["id", "name", "currency_code", "countries.iso_2"],
+  })
 
-  if (match.status === "one") {
-    logger.info(`Sales channel already exists (${match.record.name}).`)
-    return match.record.id
+  return planEcuadorSetup({
+    salesChannels: (channels ?? []) as SalesChannelRecord[],
+    shippingProfiles: (profiles ?? []) as ShippingProfileRecord[],
+    regions: ((regions ?? []) as RegionRecord[]).map((region) => ({
+      id: region.id,
+      name: region.name,
+      currencyCode: region.currency_code,
+      countryCodes: countryCodesOf(region),
+    })),
+    salesChannelName: SALES_CHANNEL_NAME,
+    regionName: REGION_NAME,
+    currencyCode: CURRENCY_CODE,
+    countryCode: COUNTRY_CODE,
+  })
+}
+
+async function ensureSalesChannel(
+  container: MedusaContainer,
+  logger: { info: (message: string) => void },
+  salesChannelId: string | null
+) {
+  if (salesChannelId) {
+    logger.info(`Sales channel already exists (${SALES_CHANNEL_NAME}).`)
+    return salesChannelId
   }
 
   const {
@@ -748,25 +791,12 @@ async function ensurePricePreference(
 
 async function ensureShippingProfile(
   container: MedusaContainer,
-  query: { graph: Function },
-  logger: { info: (message: string) => void }
+  logger: { info: (message: string) => void },
+  shippingProfileId: string | null
 ) {
-  const { data } = await query.graph({
-    entity: "shipping_profile",
-    fields: ["id", "name", "type"],
-  })
-  const profiles = (data ?? []) as ShippingProfileRecord[]
-  const match = matchDefaultShippingProfiles(profiles)
-  if (match.status === "duplicate") {
-    throw new MedusaError(MedusaError.Types.INVALID_DATA, match.message)
-  }
-  if (match.status === "one") {
-    return match.profile.id
-  }
-
-  const nameConflict = defaultShippingProfileNameConflict(profiles)
-  if (nameConflict) {
-    throw new MedusaError(MedusaError.Types.INVALID_DATA, nameConflict)
+  if (shippingProfileId) {
+    logger.info(`Default shipping profile already exists (${shippingProfileId}).`)
+    return shippingProfileId
   }
 
   const { result } = await createShippingProfilesWorkflow(container).run({

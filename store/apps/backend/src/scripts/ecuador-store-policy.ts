@@ -255,6 +255,102 @@ export function defaultShippingProfileNameConflict<
   return `A shipping profile named "${name}" already exists (${named.id}) with type "${shown}", not "default". Refusing to create another profile with that name or to change the existing one.`
 }
 
+export type EcuadorSetupDecision =
+  | {
+      status: "ready"
+      salesChannelId: string | null
+      shippingProfileId: string | null
+    }
+  | {
+      status: "blocked"
+      code: "invalid_data" | "not_allowed"
+      message: string
+    }
+
+/**
+ * Read-only decision for setup. A blocked result is thrown before any
+ * workflow or module write. Shipping profile creation uses the ready ids.
+ */
+export function planEcuadorSetup(input: {
+  salesChannels: { id: string; name?: string | null }[]
+  shippingProfiles: { id: string; name?: string | null; type?: string | null }[]
+  regions: {
+    id: string
+    name?: string | null
+    currencyCode?: string | null
+    countryCodes: string[]
+  }[]
+  salesChannelName: string
+  regionName: string
+  currencyCode: string
+  countryCode: string
+}): EcuadorSetupDecision {
+  const channel = matchExactName(
+    input.salesChannels,
+    input.salesChannelName,
+    "sales channel"
+  )
+  if (channel.status === "duplicate") {
+    return { status: "blocked", code: "invalid_data", message: channel.message }
+  }
+
+  const profiles = matchDefaultShippingProfiles(input.shippingProfiles)
+  if (profiles.status === "duplicate") {
+    return {
+      status: "blocked",
+      code: "invalid_data",
+      message: profiles.message,
+    }
+  }
+
+  if (profiles.status === "missing") {
+    const nameConflict = defaultShippingProfileNameConflict(input.shippingProfiles)
+    if (nameConflict) {
+      return { status: "blocked", code: "invalid_data", message: nameConflict }
+    }
+  }
+
+  const countryCode = input.countryCode.toLowerCase()
+  const currencyCode = input.currencyCode.toLowerCase()
+  const byCountry = input.regions.find((region) =>
+    region.countryCodes.some((code) => code.toLowerCase() === countryCode)
+  )
+  const byNameAndCurrency = input.regions.find(
+    (region) =>
+      region.name === input.regionName &&
+      (region.currencyCode ?? "").toLowerCase() === currencyCode
+  )
+  const existing = byCountry ?? byNameAndCurrency
+  if (existing) {
+    const countryPlan = planRegionCountries({
+      regionId: existing.id,
+      regionName: existing.name,
+      countryCodes: existing.countryCodes,
+      otherRegions: input.regions
+        .filter((region) => region.id !== existing.id)
+        .map((region) => ({
+          id: region.id,
+          name: region.name,
+          countryCodes: region.countryCodes,
+        })),
+      countryCode,
+    })
+    if (countryPlan.action === "stop") {
+      return {
+        status: "blocked",
+        code: "not_allowed",
+        message: countryPlan.message,
+      }
+    }
+  }
+
+  return {
+    status: "ready",
+    salesChannelId: channel.status === "one" ? channel.record.id : null,
+    shippingProfileId: profiles.status === "one" ? profiles.profile.id : null,
+  }
+}
+
 export function shouldFixEcuadorShippingProfile(
   env: { FIX_EC_SHIPPING_PROFILE?: string } = process.env
 ) {
