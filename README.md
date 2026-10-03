@@ -83,14 +83,38 @@ Desde `store/` (Node 20+, PostgreSQL 15+, pnpm 10+):
 # backend — http://localhost:9000  (admin: /app)
 cd apps/backend
 cp .env.template .env   # set DATABASE_URL
-pnpm exec medusa db:migrate
+pnpm migrate            # schema + fresh Ecuador store seed
+pnpm seed:ec            # safe to re-run: USD, region ec, IVA 15%, shipping
+# FIX_EC_ZONES and FIX_EC_SHIPPING_PROFILE apply only when setup runs:
+# pnpm seed:ec, or the first migrate before initial-data-seed.ts has finished_at.
+# Remove them from the environment as soon as the fix has been applied.
+# If left set, the next seed:ec or a recreated database deletes zones or moves
+# shipping options again without anyone asking.
+# Setting a flag and deploying applies nothing after that script_migrations row is finished.
+# In production, setup logs that same warning while either flag is still true.
+# If that script's preflight blocks, finished_at stays unset and migrate keeps failing.
+# Fix the conflict the error names, then run pnpm migrate again.
+# Medusa serializes migration scripts with pg_try_advisory_lock.
+# ensureEcuadorStore also locks key 7482910365542101 so seed:ec can run beside
+# another seed:ec or the first migrate. The sales channel has no unique index.
+# The lock borrows PG_CONNECTION via acquireConnection and pg_try_advisory_lock.
+# A miss returns the connection and retries with jitter for up to five minutes.
+# seed:ec and migrate must connect directly to Postgres or through a session-mode pooler.
+# The advisory lock is session-scoped and does not protect behind PgBouncer or the
+# Supabase transaction-mode pooler (port 6543).
+# Real certificate verification arrives with PR #8. Merge order is #10, then #8, then #6.
+# Moving the shipping option leaves products on the old profile without it.
+# fill TODO sku / price / stock in src/data/cap-products.ts
+pnpm seed:caps
+pnpm catalog:sync
 pnpm exec medusa develop
 
 # storefront — http://localhost:8000  (home: /ec)
 cd apps/storefront
-# .env.local: NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY
-#             NEXT_PUBLIC_MEDUSA_BACKEND_URL=http://localhost:9000
-#             NEXT_PUBLIC_DEFAULT_REGION=ec
+cp .env.template .env.local
+# NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY
+# NEXT_PUBLIC_MEDUSA_BACKEND_URL=http://localhost:9000
+# NEXT_PUBLIC_DEFAULT_REGION=ec
 pnpm dev
 ```
 

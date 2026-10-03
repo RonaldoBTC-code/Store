@@ -4,6 +4,7 @@ import {
   ProductStatus,
 } from "@medusajs/framework/utils"
 import { updateProductsWorkflow } from "@medusajs/medusa/core-flows"
+import { assertSeedAllowed } from "./assert-seed-allowed"
 
 const CANONICAL_HANDLES = ["fish-hug", "lo-fi-cat", "busy-dog", "cat-online"] as const
 const DEMO_HANDLES = new Set(["t-shirt", "sweatshirt", "sweatpants", "shorts"])
@@ -41,6 +42,8 @@ const canonicalHandleFor = (product: ProductRecord) => {
  * Keeps one published product per SKU: fish-hug, lo-fi-cat, busy-dog, cat-online.
  */
 export default async function syncGatoGangCatalog({ container }: ExecArgs) {
+  assertSeedAllowed()
+
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
 

@@ -94,12 +94,7 @@ export default function ProductActions({
       return true
     }
 
-    // Quantity is often omitted until inventory is linked — allow test adds
-    if (selectedVariant.inventory_quantity == null) {
-      return true
-    }
-
-    return selectedVariant.inventory_quantity > 0
+    return (selectedVariant.inventory_quantity ?? 0) > 0
   }, [selectedVariant])
 
   const actionsRef = useRef<HTMLDivElement>(null)
