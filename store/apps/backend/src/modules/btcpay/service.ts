@@ -40,6 +40,7 @@ import {
   BTCPAY_PENDING_LIMIT,
   DEFAULT_INVOICE_TTL_MS,
   hashClientIp,
+  hashSessionId,
   LimitConfig,
   PENDING_LIMIT_MESSAGE,
   PaymentStatus,
@@ -210,7 +211,7 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
     const claim = await this.claims().claim({
       invoiceId: invoice.id,
       cartId: session.cart_id,
-      paymentSessionId: session.payment_session_id,
+      paymentSessionId: this.sessionHash(session.payment_session_id),
       amountCents: session.amount_cents,
       currencyCode: "usd",
     })
@@ -491,14 +492,16 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
     }
     const customerId =
       snapshot?.customerId ?? readCustomerId(input) ?? null
-    const ipHash = hashClientIp(stringValue(input.data?.client_ip))
+    const secret = this.personalSecret()
+    const ipHash = hashClientIp(stringValue(input.data?.client_ip), secret)
     const store = this.payments()
     const acquired = await store.tryAcquire({
       cartId,
-      paymentSessionId,
+      paymentSessionId: this.sessionHash(paymentSessionId),
       customerId,
       ipHash,
       units,
+      amountCents,
       now: new Date(),
       limits: this.limits_,
       replaceInvoiceId,
@@ -652,6 +655,29 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
       )
     }
     return registered
+  }
+
+  private personalSecret(): string {
+    const dedicated = process.env.BTCPAY_PII_HMAC_SECRET?.trim()
+    const secret = dedicated || this.config_.webhookSecret.trim()
+    if (!secret) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        "BTCPay personal-data HMAC secret is not configured."
+      )
+    }
+    return secret
+  }
+
+  private sessionHash(sessionId: string): string {
+    const hash = hashSessionId(sessionId, this.personalSecret())
+    if (!hash) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        "BTCPay payment requires the Medusa payment session id."
+      )
+    }
+    return hash
   }
 
   private assertConfigured() {

@@ -1,4 +1,4 @@
-import { createHash } from "crypto"
+import { createHmac } from "crypto"
 
 export const BTCPAY_PENDING_LIMIT = "BTCPAY_PENDING_LIMIT"
 
@@ -39,6 +39,18 @@ export type PaymentStatus =
   | "invalid"
   | "canceled"
 
+/** Rows that still hold the one-open-invoice slot for a cart. */
+export const OPEN_PAYMENT_STATUSES: readonly PaymentStatus[] = ["holding", "pending"]
+
+export const CLOSED_PAYMENT_STATUSES: readonly PaymentStatus[] = [
+  "settled",
+  "expired",
+  "invalid",
+  "canceled",
+]
+
+export const PERSONAL_DATA_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+
 export type PaymentRecord = {
   id: string
   provider: string
@@ -60,6 +72,7 @@ export type AcquireInput = {
   customerId: string | null
   ipHash: string | null
   units: number
+  amountCents: number
   now: Date
   limits: LimitConfig
   replaceInvoiceId?: string
@@ -87,15 +100,39 @@ export function resolveLimits(
     }
     resolved[key] = positiveInt(env[LIMIT_ENV[key]], DEFAULT_LIMITS[key])
   }
+  // The partial unique index allows one open row per cart. Env cannot raise it.
+  resolved.maxPendingPerCart = 1
   return resolved
 }
 
-export function hashClientIp(ip: string): string | null {
-  const trimmed = ip.trim().toLowerCase()
-  if (!trimmed) {
+export function personalDataSecret(env: NodeJS.ProcessEnv = process.env): string {
+  const dedicated = env.BTCPAY_PII_HMAC_SECRET
+  const webhook = env.BTCPAY_WEBHOOK_SECRET
+  if (typeof dedicated === "string" && dedicated.trim()) {
+    return dedicated.trim()
+  }
+  if (typeof webhook === "string" && webhook.trim()) {
+    return webhook.trim()
+  }
+  return ""
+}
+
+/** HMAC-SHA256 hex. Empty value or empty secret stores nothing. */
+export function hashPersonal(value: string, secret: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed || !secret.trim()) {
     return null
   }
-  return createHash("sha256").update(trimmed).digest("hex")
+  return createHmac("sha256", secret).update(trimmed).digest("hex")
+}
+
+export function hashClientIp(ip: string, secret: string): string | null {
+  const normalized = ip.trim().toLowerCase().replace(/^::ffff:/, "")
+  return hashPersonal(normalized, secret)
+}
+
+export function hashSessionId(sessionId: string, secret: string): string | null {
+  return hashPersonal(sessionId.trim(), secret)
 }
 
 /**

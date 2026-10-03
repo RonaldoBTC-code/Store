@@ -1,5 +1,10 @@
 import { MedusaService } from "@medusajs/framework/utils"
-import { claimOnce, type BtcpayClaimStore, type ClaimInput } from "../btcpay/claim"
+import {
+  claimOnce,
+  isUniqueViolation,
+  type BtcpayClaimStore,
+  type ClaimInput,
+} from "../btcpay/claim"
 import { registerBtcpayClaimStore } from "../btcpay/claim-registry"
 import {
   AcquireInput,
@@ -10,6 +15,15 @@ import {
   PaymentStatus,
 } from "../btcpay/limits"
 import { registerBtcpayPaymentStore } from "../btcpay/payment-registry"
+import {
+  abortHoldingPayment,
+  acquirePaymentSlot,
+  confirmSettlement,
+  DbManager,
+  mikroTx,
+  newClaimId,
+  redactClosedPersonalData,
+} from "../btcpay/payment-sql"
 import {
   BtcpayPaymentStore,
   CommitInvoiceInput,
@@ -23,7 +37,7 @@ type PaymentRow = {
   status?: string | null
   cart_id?: string | null
   customer_id?: string | null
-  payment_session_id?: string | null
+  payment_session_hash?: string | null
   invoice_id?: string | null
   ip_hash?: string | null
   unit_count?: number | null
@@ -37,20 +51,36 @@ class BtcpayClaimModuleService
   implements BtcpayClaimStore, BtcpayPaymentStore
 {
   private chain: Promise<void> = Promise.resolve()
+  private readonly db_?: DbManager
 
-  constructor(container: Record<string, unknown>) {
+  constructor(container: { manager?: DbManager } & Record<string, unknown>) {
     // MedusaService's generated constructor is not part of the public types.
     super(container as never)
+    this.db_ = container.manager
     registerBtcpayClaimStore(this)
     registerBtcpayPaymentStore(this)
   }
 
   async claim(input: ClaimInput) {
     return claimOnce(async () => {
+      const manager = this.db_
+      if (manager?.transactional) {
+        await manager.transactional(async (tx) => {
+          await confirmSettlement(mikroTx(tx), {
+            id: newClaimId(),
+            invoiceId: input.invoiceId,
+            cartId: input.cartId,
+            paymentSessionHash: input.paymentSessionId,
+            amountCents: input.amountCents,
+            currencyCode: input.currencyCode,
+          })
+        })
+        return
+      }
       await this.createBtcpayInvoiceClaims({
         invoice_id: input.invoiceId,
         cart_id: input.cartId,
-        payment_session_id: input.paymentSessionId,
+        payment_session_hash: input.paymentSessionId,
         amount_cents: input.amountCents,
         currency_code: input.currencyCode,
       })
@@ -58,29 +88,50 @@ class BtcpayClaimModuleService
   }
 
   async tryAcquire(input: AcquireInput) {
+    const manager = this.db_
+    if (manager?.transactional) {
+      return manager.transactional(async (tx) => acquirePaymentSlot(mikroTx(tx), input))
+    }
     return this.exclusive(async () => {
       const rows = await this.rowsFor(input)
       if (invoiceLimitBlocks(rows, input)) {
         return { ok: false as const }
       }
-      const created = await this.createBtcpayPayments({
-        provider: BTCPAY_PROVIDER,
-        status: "holding",
-        cart_id: input.cartId,
-        customer_id: input.customerId,
-        payment_session_id: input.paymentSessionId,
-        invoice_id: null,
-        ip_hash: input.ipHash,
-        unit_count: input.units,
-        expires_at: new Date(input.now.getTime() + DEFAULT_INVOICE_TTL_MS),
-        reservation_ids: { ids: [] },
-      })
-      const id = created.id
-      if (!id) {
-        return { ok: false as const }
+      try {
+        const created = await this.createBtcpayPayments({
+          provider: BTCPAY_PROVIDER,
+          status: "holding",
+          cart_id: input.cartId,
+          customer_id: input.customerId,
+          payment_session_hash: input.paymentSessionId,
+          invoice_id: null,
+          ip_hash: input.ipHash,
+          unit_count: input.units,
+          amount_cents: input.amountCents,
+          expires_at: new Date(input.now.getTime() + DEFAULT_INVOICE_TTL_MS),
+          reservation_ids: { ids: [] },
+          replaces_id: null,
+        })
+        const id = created.id
+        if (!id) {
+          return { ok: false as const }
+        }
+        return { ok: true as const, id }
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          return { ok: false as const }
+        }
+        throw error
       }
-      return { ok: true as const, id }
     })
+  }
+
+  async redactClosedPersonalData(now: Date = new Date()): Promise<number> {
+    const manager = this.db_
+    if (!manager?.transactional) {
+      return 0
+    }
+    return manager.transactional(async (tx) => redactClosedPersonalData(mikroTx(tx), now))
   }
 
   async commitInvoice(input: CommitInvoiceInput) {
@@ -94,6 +145,11 @@ class BtcpayClaimModuleService
   }
 
   async abort(id: string) {
+    const manager = this.db_
+    if (manager?.transactional) {
+      await manager.transactional(async (tx) => abortHoldingPayment(mikroTx(tx), id))
+      return
+    }
     const rows = await this.listBtcpayPayments({ id })
     const row = rows[0]
     if (row?.status === "holding") {
@@ -127,7 +183,7 @@ class BtcpayClaimModuleService
       }),
       this.listBtcpayPayments({
         provider: BTCPAY_PROVIDER,
-        payment_session_id: input.paymentSessionId,
+        payment_session_hash: input.paymentSessionId,
       }),
     ]
     if (input.customerId) {
@@ -173,7 +229,7 @@ function mapPayment(row: PaymentRow): PaymentRecord {
     status: (row.status || "pending") as PaymentStatus,
     cartId: row.cart_id || "",
     customerId: row.customer_id ?? null,
-    paymentSessionId: row.payment_session_id || "",
+    paymentSessionId: row.payment_session_hash || "",
     invoiceId: row.invoice_id ?? null,
     ipHash: row.ip_hash ?? null,
     unitCount: typeof row.unit_count === "number" ? row.unit_count : 0,

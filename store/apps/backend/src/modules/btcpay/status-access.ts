@@ -1,4 +1,5 @@
-import { createHash } from "crypto"
+import { randomBytes } from "crypto"
+import { hashPersonal, personalDataSecret } from "./limits"
 
 export const STATUS_NOT_FOUND = "No encontramos el carrito."
 
@@ -71,8 +72,13 @@ export function statusRateLimitConfig(
   }
 }
 
+let ephemeralRateSecret: string | null = null
+
 export function hashRateLimitKey(value: string): string {
-  return createHash("sha256").update(value).digest("hex")
+  const secret =
+    personalDataSecret() ||
+    (ephemeralRateSecret ??= randomBytes(32).toString("hex"))
+  return hashPersonal(value, secret) ?? ""
 }
 
 export class StatusRateLimiter {

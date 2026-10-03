@@ -94,8 +94,9 @@ Set these on the Medusa backend only. Leave them empty in `.env.template`. Do no
 | `BTCPAY_URL` | BTCPay base URL, no path, for example `https://btcpay.example` |
 | `BTCPAY_STORE_ID` | Store id the API key is scoped to |
 | `BTCPAY_API_KEY` | Greenfield API key |
-| `BTCPAY_WEBHOOK_SECRET` | Secret shown when the webhook is created |
-| `BTCPAY_MAX_PENDING_PER_CART` | Open invoices allowed for one cart at a time. Default `1` |
+| `BTCPAY_WEBHOOK_SECRET` | Secret shown when the webhook is created. Also the HMAC key for stored IP and session hashes when `BTCPAY_PII_HMAC_SECRET` is empty |
+| `BTCPAY_PII_HMAC_SECRET` | Optional dedicated key for those hashes. Leave empty to use the webhook secret |
+| `BTCPAY_MAX_PENDING_PER_CART` | Kept for compatibility. The database allows one open invoice per cart, so a higher value is ignored |
 | `BTCPAY_MAX_PENDING_PER_SESSION` | Open invoices allowed for one Medusa payment session. Default `1` |
 | `BTCPAY_MAX_PENDING_PER_CUSTOMER` | Open invoices allowed for one logged-in customer. Default `2`. Guests are not grouped together |
 | `BTCPAY_MAX_NEW_INVOICES_PER_IP` | New invoices allowed from one IP inside the window. Default `5` |
@@ -108,7 +109,19 @@ Blank values keep the defaults. If any of the four connection variables is missi
 
 An open invoice holds stock until it expires, is canceled, or settles. The hold is skipped when a limit blocks the invoice, and the API returns `code: "BTCPAY_PENDING_LIMIT"` with no counts in the message. The storefront shows "Ya tienes un pago pendiente, termínalo o espera a que venza". `GET /store/btcpay/status` includes `expires_at` from the invoice `expirationTime` so the return page can count down the hold. BTCPay's store FAQ default timer is 15 minutes when the response omits `expirationTime`: <https://docs.btcpayserver.org/FAQ/Stores/>
 
-Pending rows live in `btcpay_payment`, indexed on `(provider, status, cart_id)` and `(provider, status, customer_id)`.
+Pending rows live in `btcpay_payment`. Lookup indexes are `(provider, status, cart_id)` and `(provider, status, customer_id)`.
+
+Open rows in this table use status `holding` (the slot is taken and BTCPay has not returned an invoice yet) and `pending` (the invoice exists and is not settled). Those are not BTCPay's `New` and `Processing` statuses.
+
+The database enforces one open row per cart with partial unique index `IDX_btcpay_payment_open_cart_unique` on `cart_id` where `status IN ('holding', 'pending')` and `deleted_at IS NULL`. A second insert hits Postgres `23505` and the provider returns `BTCPAY_PENDING_LIMIT` without reserving stock. `BTCPAY_MAX_PENDING_PER_CART` cannot raise that cap.
+
+`IDX_btcpay_payment_provider_invoice_id_unique` is `UNIQUE (provider, invoice_id)` where `invoice_id IS NOT NULL` and `deleted_at IS NULL`. It was not on the table before. Holding rows keep a null invoice id, and Postgres allows more than one null, so the slot can be taken before BTCPay responds. After the invoice id is stored, a second row for that provider and invoice is rejected.
+
+Session and customer caps are counts, so the insert transaction takes `pg_advisory_xact_lock` on the session hash and, when the shopper is logged in, on the customer id. The lock is held for the count and the insert. Guests are not locked together.
+
+USD amounts are integer cents (`amount_cents` integer, `unit_count` integer). There is no float column and no sats column, because this integration does not persist a bitcoin amount. A sats value would be `bigint`.
+
+The raw IP and the raw Medusa payment session id are not stored. Both are HMAC-SHA256 hex, keyed with `BTCPAY_PII_HMAC_SECRET` or, if that is empty, `BTCPAY_WEBHOOK_SECRET`. The invoice metadata sent to BTCPay still carries the payment session id so the return check can match it. A daily job (`btcpay-redact-personal-data`, cron `0 3 * * *`) nulls `ip_hash` and `payment_session_hash` on closed rows (`settled`, `expired`, `invalid`, `canceled`) older than 30 days, and nulls the session hash on claim rows older than 30 days. The log line is the number of rows updated.
 
 `GET /store/btcpay/status` reads `cart_id` and `payment_session_id` only. An invoice id in the query is ignored. The payment session must belong to that cart. If the cart is assigned to a customer, the caller must be that customer. The JSON body is `state`, `message`, and sometimes `expires_at` and `order_id`. It does not include a name, email, address, or invoice id. Requests are limited per IP and per cart (`BTCPAY_STATUS_MAX_REQUESTS`, default 30, and `BTCPAY_STATUS_WINDOW_SECONDS`, default 60). A blocked caller gets HTTP 429 and a message with no counts.
 
@@ -212,7 +225,7 @@ Not verified against a running BTCPay Server or with real funds:
 - A live webhook delivery, including the exact JSON field set (`deliveryId`, `invoiceId`, `type`, `storeId`, `metadata`). Those names come from BTCPay's own issue reports and from the re-fetched invoice, which is what we act on. The rendered OpenAPI page at <https://docs.btcpayserver.org/API/Greenfield/v1/> did not load as static HTML.
 - Whether every BTCPay version echoes custom metadata keys (`cartId`, `paymentSessionId`, `amountCents`) unchanged on `GET` invoice. If a version drops them, the webhook will not authorize and the return page will show a mismatch instead of completing the order.
 - The modal script and its `postMessage` statuses (`complete`, `paid`, `expired`). They are quoted from the ecommerce guide only.
-- End-to-end checkout in a browser, Medusa cart completion under a real Postgres race, or `medusa db:migrate` on a production database. Unit tests cover the provider with a mocked HTTP client, an in-memory stand-in for the unique invoice claim, and an in-memory stand-in for pending-invoice limits. The unique index itself is the migration `IDX_btcpay_invoice_claim_invoice_id_unique`. The pending-payment indexes are `IDX_btcpay_payment_provider_status_cart_id` and `IDX_btcpay_payment_provider_status_customer_id`.
+- End-to-end checkout in a browser, or `medusa db:migrate` on a production database. Unit tests cover the provider with a mocked HTTP client. Postgres integration tests apply the migrations, including `down`, and check concurrent cart inserts, the session advisory lock, HMAC storage, 30-day redaction, and one claim when webhook and return confirmation run together. The claim unique index is `IDX_btcpay_invoice_claim_invoice_id_unique`. The payment unique index is `IDX_btcpay_payment_provider_invoice_id_unique`.
 - A live invoice `expirationTime` payload. The countdown reads that field when BTCPay sends a unix timestamp or an ISO date. The 15 minute fallback is the store FAQ default, not a value measured on an instance.
 - Inventory reservation against a running Medusa database. The provider calls the inventory module when a sales channel has a stock location and the variant manages inventory. Unit tests assert that a blocked invoice never calls that reservation step.
 - The deployment FAQ's 2 GB / 80 GB numbers versus the Docker specs page's 4 GB / 2 cores / 50 GB starting point. Both are linked above; the specs page is the one to follow.
