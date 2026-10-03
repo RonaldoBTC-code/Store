@@ -1,0 +1,359 @@
+import { createHmac } from "crypto"
+import { MedusaError, PaymentActions } from "@medusajs/framework/utils"
+import { BtcpayClient, BtcpayInvoice } from "../client"
+import { claimOnce, MemoryBtcpayClaimStore } from "../claim"
+import BtcpayPaymentProviderService from "../service"
+
+const SECRET = "webhook-secret"
+const ORIGIN = "https://btcpay.example"
+
+function invoice(overrides: Partial<BtcpayInvoice> = {}): BtcpayInvoice {
+  return {
+    id: "inv123",
+    storeId: "store123",
+    amount: "10.00",
+    currency: "USD",
+    status: "Settled",
+    additionalStatus: "None",
+    checkoutLink: `${ORIGIN}/i/inv123`,
+    metadata: {
+      orderId: "cart_1",
+      cartId: "cart_1",
+      paymentSessionId: "payses_1",
+      amountCents: 1000,
+    },
+    ...overrides,
+  }
+}
+
+function sessionData(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "inv123",
+    invoice_id: "inv123",
+    checkout_link: `${ORIGIN}/i/inv123`,
+    cart_id: "cart_1",
+    payment_session_id: "payses_1",
+    amount_cents: 1000,
+    amount: "10.00",
+    currency_code: "usd",
+    ...overrides,
+  }
+}
+
+function provider(client: BtcpayClient, claimStore = new MemoryBtcpayClaimStore()) {
+  return new BtcpayPaymentProviderService(
+    { client, claimStore },
+    {
+      url: ORIGIN,
+      storeId: "store123",
+      apiKey: "test-key",
+      webhookSecret: SECRET,
+      allowedRedirectOrigins: ["http://localhost:8000"],
+    }
+  )
+}
+
+function sign(body: string, secret = SECRET) {
+  return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`
+}
+
+function webhook(
+  service: BtcpayPaymentProviderService,
+  body: Record<string, unknown>,
+  header?: string
+) {
+  const raw = JSON.stringify(body)
+  return service.getWebhookActionAndData({
+    data: body,
+    rawData: raw,
+    headers: {
+      "btcpay-sig": header ?? sign(raw),
+    },
+  })
+}
+
+describe("BTCPay payment provider", () => {
+  it("creates a USD invoice tied to the cart and payment session", async () => {
+    const client = mockClient()
+    client.createInvoice.mockResolvedValue(invoice())
+    const service = provider(client)
+
+    const result = await service.initiatePayment({
+      amount: "10.00",
+      currency_code: "usd",
+      data: {
+        cart_id: "cart_1",
+        session_id: "payses_1",
+        redirect_url: "http://localhost:8000/ec/checkout/btcpay/return",
+      },
+    })
+
+    expect(client.createInvoice).toHaveBeenCalledWith({
+      amount: "10.00",
+      currency: "USD",
+      amountCents: 1000,
+      cartId: "cart_1",
+      paymentSessionId: "payses_1",
+      redirectUrl: "http://localhost:8000/ec/checkout/btcpay/return",
+    })
+    expect(result.data).toEqual(expect.objectContaining({ invoice_id: "inv123" }))
+  })
+
+  it("authorizes only a settled invoice and captures it in Medusa", async () => {
+    const client = mockClient()
+    client.getInvoice.mockResolvedValue(invoice())
+    const service = provider(client)
+
+    const authorized = await service.authorizePayment({ data: sessionData() })
+    const action = await webhook(service, {
+      type: "InvoiceSettled",
+      invoiceId: "inv123",
+      storeId: "store123",
+      deliveryId: "deliv1",
+    })
+
+    expect(authorized.status).toBe("captured")
+    expect(action).toEqual({
+      action: PaymentActions.AUTHORIZED,
+      data: { session_id: "payses_1", amount: 10 },
+    })
+    expect(client.getInvoice).toHaveBeenCalledWith("inv123")
+  })
+
+  it("authorizes settled overpaid invoices for the original USD total", async () => {
+    const client = mockClient()
+    client.getInvoice.mockResolvedValue(invoice({ additionalStatus: "PaidOver" }))
+    const service = provider(client)
+
+    const authorized = await service.authorizePayment({ data: sessionData() })
+
+    expect(authorized.status).toBe("captured")
+  })
+
+  it("does not authorize an expired invoice", async () => {
+    const client = mockClient()
+    client.getInvoice.mockResolvedValue(
+      invoice({ status: "Expired", additionalStatus: "None" })
+    )
+    const service = provider(client)
+
+    await expect(
+      service.authorizePayment({ data: sessionData() })
+    ).rejects.toBeInstanceOf(MedusaError)
+    const action = await webhook(service, {
+      type: "InvoiceExpired",
+      invoiceId: "inv123",
+      storeId: "store123",
+    })
+
+    expect(action.action).toBe(PaymentActions.FAILED)
+  })
+
+  it("does not authorize an invalid invoice", async () => {
+    const client = mockClient()
+    client.getInvoice.mockResolvedValue(
+      invoice({ status: "Invalid", additionalStatus: "Invalid" })
+    )
+    const service = provider(client)
+
+    await expect(
+      service.authorizePayment({ data: sessionData() })
+    ).rejects.toBeInstanceOf(MedusaError)
+    const action = await webhook(service, {
+      type: "InvoiceInvalid",
+      invoiceId: "inv123",
+      storeId: "store123",
+    })
+
+    expect(action.action).toBe(PaymentActions.FAILED)
+  })
+
+  it("does not authorize an underpaid invoice", async () => {
+    const client = mockClient()
+    client.getInvoice.mockResolvedValue(
+      invoice({ status: "Processing", additionalStatus: "PaidPartial" })
+    )
+    const service = provider(client)
+
+    await expect(
+      service.authorizePayment({ data: sessionData() })
+    ).rejects.toBeInstanceOf(MedusaError)
+    const action = await webhook(service, {
+      type: "InvoiceReceivedPayment",
+      invoiceId: "inv123",
+      storeId: "store123",
+    })
+
+    expect(action.action).toBe(PaymentActions.FAILED)
+  })
+
+  it("leaves a processing invoice pending and does not complete it from the webhook", async () => {
+    const client = mockClient()
+    client.getInvoice.mockResolvedValue(
+      invoice({ status: "Processing", additionalStatus: "None" })
+    )
+    const service = provider(client)
+
+    const pending = await service.authorizePayment({ data: sessionData() })
+    const action = await webhook(service, {
+      type: "InvoiceProcessing",
+      invoiceId: "inv123",
+      storeId: "store123",
+    })
+
+    expect(pending.status).toBe("pending")
+    expect(action.action).toBe(PaymentActions.NOT_SUPPORTED)
+  })
+
+  it("rejects a forged webhook signature before reading the invoice", async () => {
+    const client = mockClient()
+    const service = provider(client)
+    const body = {
+      type: "InvoiceSettled",
+      invoiceId: "inv123",
+      storeId: "store123",
+    }
+
+    const action = await webhook(service, body, sign(JSON.stringify(body), "other-secret"))
+
+    expect(action.action).toBe(PaymentActions.NOT_SUPPORTED)
+    expect(client.getInvoice).not.toHaveBeenCalled()
+  })
+
+  it("rejects a replayed webhook confirmation", async () => {
+    const client = mockClient()
+    client.getInvoice.mockResolvedValue(invoice())
+    const service = provider(client)
+    const body = {
+      type: "InvoiceSettled",
+      invoiceId: "inv123",
+      storeId: "store123",
+      deliveryId: "deliv1",
+      isRedelivery: true,
+    }
+
+    const firstEvent = await webhook(service, body)
+    const replayedEvent = await webhook(service, body)
+    const first = await service.authorizePayment({ data: sessionData() })
+
+    await expect(
+      service.authorizePayment({ data: sessionData() })
+    ).rejects.toThrow(/already being confirmed/)
+
+    expect(firstEvent.action).toBe(PaymentActions.AUTHORIZED)
+    expect(replayedEvent.action).toBe(PaymentActions.AUTHORIZED)
+    expect(first.status).toBe("captured")
+  })
+
+  it("lets only one of two concurrent confirmations authorize", async () => {
+    const client = mockClient()
+    client.getInvoice.mockResolvedValue(invoice())
+    const service = provider(client)
+
+    const results = await Promise.allSettled([
+      service.authorizePayment({ data: sessionData() }),
+      service.authorizePayment({ data: sessionData() }),
+    ])
+
+    const authorized = results.filter(
+      (result) => result.status === "fulfilled" && result.value.status === "captured"
+    )
+    const rejected = results.filter((result) => result.status === "rejected")
+
+    expect(authorized).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+  })
+
+  it("rejects an amount or currency mismatch and an invoice for another cart", async () => {
+    const client = mockClient()
+    const service = provider(client)
+
+    client.getInvoice.mockResolvedValue(invoice({ amount: "10.01" }))
+    await expect(
+      service.authorizePayment({ data: sessionData() })
+    ).rejects.toThrow(/amount does not match/)
+
+    client.getInvoice.mockResolvedValue(invoice({ currency: "EUR" }))
+    await expect(
+      service.authorizePayment({ data: sessionData() })
+    ).rejects.toThrow(/not USD/)
+
+    client.getInvoice.mockResolvedValue(
+      invoice({
+        metadata: {
+          orderId: "cart_2",
+          cartId: "cart_2",
+          paymentSessionId: "payses_1",
+          amountCents: 1000,
+        },
+      })
+    )
+    await expect(
+      service.authorizePayment({ data: sessionData() })
+    ).rejects.toThrow(/different cart/)
+
+    client.getInvoice.mockResolvedValue(
+      invoice({ amount: "10.01", metadata: { ...invoice().metadata, amountCents: 1000 } })
+    )
+    const action = await webhook(service, {
+      type: "InvoiceSettled",
+      invoiceId: "inv123",
+      storeId: "store123",
+    })
+    expect(action.action).toBe(PaymentActions.FAILED)
+  })
+
+  it("maps a database unique violation to a replay", async () => {
+    const error = Object.assign(new Error("duplicate key value violates unique constraint"), {
+      code: "23505",
+    })
+    let calls = 0
+
+    const first = await claimOnce(async () => {
+      calls += 1
+    })
+    const second = await claimOnce(async () => {
+      throw error
+    })
+
+    expect(first).toBe("claimed")
+    expect(second).toBe("replay")
+    expect(calls).toBe(1)
+  })
+
+  it("refuses to cancel a settled invoice and explains the pull-payment refund", async () => {
+    const client = mockClient()
+    client.getInvoice.mockResolvedValue(invoice())
+    client.refundInvoice.mockResolvedValue({
+      id: "pull1",
+      viewLink: `${ORIGIN}/pull-payments/pull1`,
+    })
+    const service = provider(client)
+
+    await expect(service.cancelPayment({ data: sessionData() })).rejects.toThrow(
+      /cannot be canceled/
+    )
+
+    const refund = await service.refundPayment({
+      data: sessionData(),
+      amount: "4.50",
+    })
+
+    expect(client.refundInvoice).toHaveBeenCalledWith("inv123", {
+      customAmount: "4.50",
+      customCurrency: "USD",
+    })
+    expect(refund.data).toEqual(
+      expect.objectContaining({ refund_view_link: `${ORIGIN}/pull-payments/pull1` })
+    )
+  })
+})
+
+function mockClient(): jest.Mocked<BtcpayClient> {
+  return {
+    createInvoice: jest.fn(),
+    getInvoice: jest.fn(),
+    markInvoiceInvalid: jest.fn(),
+    refundInvoice: jest.fn(),
+  }
+}

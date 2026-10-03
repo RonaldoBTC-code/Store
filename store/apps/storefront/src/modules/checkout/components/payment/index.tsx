@@ -1,6 +1,6 @@
 "use client"
 import { RadioGroup } from "@headlessui/react"
-import { isStripeLike, paymentInfoMap } from "@lib/constants"
+import { isBtcpay, isStripeLike, paymentInfoMap } from "@lib/constants"
 import { initiatePaymentSession } from "@lib/data/cart"
 import { CheckCircleSolid, CreditCard } from "@medusajs/icons"
 import ErrorMessage from "@modules/checkout/components/error-message"
@@ -16,7 +16,7 @@ import {
   clx,
 } from "@modules/common/components/ui"
 import { HttpTypes } from "@medusajs/types"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useState } from "react"
 
 const Payment = ({
@@ -40,6 +40,7 @@ const Payment = ({
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
+  const { countryCode } = useParams()
 
   const isOpen = searchParams.get("step") === "payment"
 
@@ -85,10 +86,30 @@ const Payment = ({
       const checkActiveSession =
         activeSession?.provider_id === selectedPaymentMethod
 
-      if (!checkActiveSession) {
-        await initiatePaymentSession(cart, {
+      let paymentSession = checkActiveSession ? activeSession : undefined
+
+      if (!checkActiveSession || isBtcpay(selectedPaymentMethod)) {
+        const collection = await initiatePaymentSession(cart, {
           provider_id: selectedPaymentMethod,
+          data: isBtcpay(selectedPaymentMethod)
+            ? {
+                cart_id: cart.id,
+                redirect_url: `${window.location.origin}/${countryCode}/checkout/btcpay/return?cart_id=${cart.id}`,
+              }
+            : undefined,
         })
+        paymentSession = collection?.payment_collection?.payment_sessions?.find(
+          (session) => session.provider_id === selectedPaymentMethod
+        )
+      }
+
+      if (isBtcpay(selectedPaymentMethod)) {
+        const checkoutLink = paymentSession?.data?.checkout_link
+        if (typeof checkoutLink !== "string" || checkoutLink.length === 0) {
+          throw new Error("No se pudo abrir el pago con Bitcoin.")
+        }
+        window.location.assign(checkoutLink)
+        return
       }
 
       if (!shouldInputPaymentDetails) {
@@ -161,6 +182,11 @@ const Payment = ({
                         paymentInfoMap={paymentInfoMap}
                         paymentProviderId={paymentMethod.id}
                         selectedPaymentOptionId={selectedPaymentMethod}
+                        data-testid={
+                          isBtcpay(paymentMethod.id)
+                            ? "btcpay-payment-option"
+                            : undefined
+                        }
                       />
                     )}
                   </div>
@@ -199,9 +225,11 @@ const Payment = ({
             }
             data-testid="submit-payment-button"
           >
-            {!activeSession && isStripeLike(selectedPaymentMethod)
-              ? "Enter payment details"
-              : "Continue to review"}
+            {isBtcpay(selectedPaymentMethod)
+              ? "Pagar con Bitcoin / Lightning"
+              : !activeSession && isStripeLike(selectedPaymentMethod)
+                ? "Enter payment details"
+                : "Continue to review"}
           </Button>
         </div>
 
