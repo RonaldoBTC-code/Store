@@ -76,9 +76,9 @@ Antes, confirmar el host de la URL (local, staging o producción). No hace falta
 - `db:migrate` (`commands/db/migrate.js`, líneas 139 y 75-80) y `db:rollback` (`commands/db/rollback.js`, líneas 17 y 32-35) llaman a `runModulesMigrations`. `db:sync-links` (`commands/db/sync-links.js`, líneas 144-146 y 82) usa el mismo loader. `MedusaAppMigrateUp` (`modules-sdk/dist/medusa-app.js`, líneas 85-87 y 465-471) y el planner de links (líneas 427-429) reciben ese `database`.
 - MikroORM 6.6.14 (`@mikro-orm/core/connections/Connection.js`, líneas 58-71) solo saca host, puerto, usuario, base y `schema` de la URL. No copia `sslmode` al cliente. El `ssl` entra por `driverOptions` al mezclar la config de Knex (`@mikro-orm/knex/AbstractSqlConnection.js`, líneas 172-176).
 
-`db:create`, y el primer paso de `db:setup`, no pasan por `databaseDriverOptions`. `commands/db/create.js` línea 130 arranca el contenedor con `skipDbConnection: true`. La línea 41 lee `DATABASE_URL` del archivo `.env`. La línea 67 lo parsea y las líneas 73-78 copian el `ssl` que salga de esa cadena. No hay un punto soportado para inyectar el objeto de `medusa-config`. Recomendación: en el `.env`, quitar de `DATABASE_URL` `ssl`, `sslmode`, `sslcert`, `sslkey`, `sslpassword`, `sslrootcert`, `uselibpqcompat` y `sslnegotiation` antes de `db:create` o `db:setup`. El TLS de esos dos comandos lo decide la URL del archivo, no `DATABASE_SSL`.
+`db:create`, y por eso el primer paso de `db:setup`, leen `DATABASE_URL` directo del `.env`. No pasan por la limpieza de la URL ni por `databaseDriverOptions`. `commands/db/create.js` línea 130 arranca el contenedor con `skipDbConnection: true`. La línea 41 lee la cadena del archivo. La línea 67 la parsea y las líneas 73-78 copian `ssl` solo si esa cadena lo trae. Si se quitan los parámetros TLS, `ssl` queda `undefined` y `pg` vuelve a leer `PGSSLMODE`. En estos comandos el TLS lo deciden la URL o `PGSSLMODE`, no `DATABASE_SSL` ni `DATABASE_CA_CERT`.
 
-En producción, la migración corre como parte del despliegue, contra la base de producción, no desde una laptop.
+`db:create` y `db:setup` son solo para uso local. Contra un Postgres gestionado que exige TLS pueden fallar. En producción la base se crea en el proveedor y el despliegue usa `db:migrate`.
 
 ## Seeds
 
