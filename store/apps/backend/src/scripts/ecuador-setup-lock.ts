@@ -210,6 +210,7 @@ export async function withEcuadorSetupLock<T>(
   }
 
   try {
+    // If the holder's socket drops during run(), Postgres releases the session lock and another process can enter; the idempotent preflight covers that case.
     return await run()
   } finally {
     let unlocked = false
