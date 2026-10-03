@@ -9,6 +9,7 @@ import {
   isCountryLevelEcuadorZone,
   shouldDeleteMisplacedEcuadorZones,
 } from "./ecuador-zone-cleanup"
+import { withEcuadorSetupLock } from "./ecuador-setup-lock"
 import {
   chooseShippingFulfillmentSet,
   DEFAULT_SHIPPING_PROFILE_NAME,
@@ -215,6 +216,14 @@ const isDuplicateLinkError = (error: unknown) => {
  * Default Shipping Profile name used by another type, and a country `ec`
  * that cannot be attached. Those stops leave the database unchanged.
  *
+ * The preflight and every write share one Postgres session advisory lock,
+ * key 7482910365542101 (`ECUADOR_SETUP_LOCK_KEY`). It is acquired with
+ * `pg_advisory_lock` on a dedicated connection. Another replica blocks
+ * until `pg_advisory_unlock` runs, then reads the preflight again and
+ * keeps the rows that already exist. That connection is closed in the
+ * same finally, including when setup throws. Connection strings are not
+ * logged.
+ *
  * On a database that already has store defaults, currencies, or a default
  * tax rate, those values are left in place. An existing region keeps its
  * name and currency. Country ec is added when that region does not have it
@@ -227,12 +236,28 @@ const isDuplicateLinkError = (error: unknown) => {
  * delete leaves the Ecuador option in place, and the next run continues
  * with whatever zones and options remain.
  */
+type EcuadorLogger = {
+  info: (message: string) => void
+  warn: (message: string) => void
+}
+
 export default async function ensureEcuadorStore({
   container,
 }: {
   container: MedusaContainer
 }) {
-  const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
+  const logger = container.resolve(
+    ContainerRegistrationKeys.LOGGER
+  ) as EcuadorLogger
+  await withEcuadorSetupLock(container, () =>
+    runEnsuredEcuadorStore(container, logger)
+  )
+}
+
+async function runEnsuredEcuadorStore(
+  container: MedusaContainer,
+  logger: EcuadorLogger
+) {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const flagWarning = productionFixFlagWarning()
   if (flagWarning) {

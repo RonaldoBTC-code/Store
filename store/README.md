@@ -102,6 +102,8 @@ A fresh database gets USD as the default currency, one Ecuador region (`ec`), IV
 
 `FIX_EC_ZONES` and `FIX_EC_SHIPPING_PROFILE` are one-time flags. `pnpm migrate` runs this setup on every deploy, including production. Set a flag to `true` only for the deploy that should apply that fix, then remove it from the environment. While either flag is `true` and `NODE_ENV` is `production` or `prod`, every run logs that the flag must be removed. `FIX_EC_SHIPPING_PROFILE=true` moves the Ecuador shipping option onto the default shipping profile. Products that are still on the old profile then do not get that shipping option at checkout.
 
+A second process can run this setup at the same time. `ensureEcuadorStore` holds a Postgres session advisory lock for the preflight and every write. The key is the signed bigint `7482910365542101` (`ECUADOR_SETUP_LOCK_KEY`). It is acquired with `pg_advisory_lock` on a dedicated connection. A second replica blocks until that connection runs `pg_advisory_unlock`, then runs the preflight again and keeps the rows that already exist. The same `finally` closes the connection, including when setup throws. Connection strings are not logged.
+
 5. Fill the TODO sku, USD price, and stock quantity for each cap in `apps/backend/src/data/cap-products.ts`, then seed the catalog and drop any leftover demo products:
 
 ```bash
