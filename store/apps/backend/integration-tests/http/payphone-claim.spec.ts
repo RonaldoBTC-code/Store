@@ -531,7 +531,10 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
                 sessionData: { amount_cents: 3499 },
               }
             )
-          ).rejects.toThrow(PayphoneResultCode.failed)
+          ).rejects.toMatchObject({
+            message: expect.stringContaining(PayphoneResultCode.pending),
+            charge: "open",
+          })
 
           const [claim] = await service.listPayphoneClaims({
             client_transaction_id: sessionId,
@@ -576,7 +579,10 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
               sessionData: { amount_cents: 3499 },
             }
           )
-        ).rejects.toThrow(PayphoneResultCode.client)
+        ).rejects.toMatchObject({
+          message: expect.stringContaining(PayphoneResultCode.pending),
+          charge: "open",
+        })
 
         const [claim] = await service.listPayphoneClaims({
           client_transaction_id: "payses_forged_id",

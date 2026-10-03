@@ -155,7 +155,7 @@ export async function settlePayphonePayment(
   )
   if (attached === "duplicate") {
     await deps.claims.releaseProcessing(claimed.id)
-    fail("client", "none")
+    fail("pending", "open")
   }
 
   let transaction: PayphoneTransaction
@@ -168,10 +168,11 @@ export async function settlePayphonePayment(
   } catch (error) {
     if (isPayphoneTransactionMissing(error)) {
       await deps.claims.releaseProcessing(claimed.id)
-      fail("failed", "none")
+      fail("pending", "open")
     }
 
-    fail("failed", "open")
+    // The row stays `processing`. The shopper is still confirming, not failed.
+    fail("pending", "open")
   }
 
   const outcome = classifyTransaction(transaction)
@@ -186,7 +187,7 @@ export async function settlePayphonePayment(
 
   if (transaction.clientTransactionId !== input.sessionId) {
     await deps.claims.releaseProcessing(claimed.id)
-    fail("client", "none")
+    fail("pending", "open")
   }
 
   const mismatch = confirmedMismatch(transaction, input.sessionId, split.amount)
@@ -207,7 +208,7 @@ export async function settlePayphonePayment(
     )
     if (moved === "duplicate") {
       await deps.claims.releaseProcessing(claimed.id)
-      fail("client", "none")
+      fail("pending", "open")
     }
   }
 

@@ -385,7 +385,10 @@ describe("settlePayphonePayment", () => {
     ]) {
       const { run, claims, completes } = harness({ confirmError })
 
-      await expect(run()).rejects.toThrow(PayphoneResultCode.failed)
+      await expect(run()).rejects.toMatchObject({
+        message: expect.stringContaining(PayphoneResultCode.pending),
+        charge: "open",
+      })
       expect(completes()).toBe(0)
       expect(statusOf(claims)).toBe("processing")
       expect(statusOf(claims)).not.toBe("rejected")
@@ -397,7 +400,10 @@ describe("settlePayphonePayment", () => {
       payphone: approved({ clientTransactionId: "payses_FORGED" }),
     })
 
-    await expect(run()).rejects.toThrow(PayphoneResultCode.client)
+    await expect(run()).rejects.toMatchObject({
+      message: expect.stringContaining(PayphoneResultCode.pending),
+      charge: "open",
+    })
     expect(completes()).toBe(0)
     expect(statusOf(claims)).toBe("pending")
     expect(claims.rows.values().next().value).toMatchObject({

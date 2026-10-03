@@ -3,18 +3,14 @@
 import { completePayphoneReturn } from "@lib/data/payphone"
 import type { PayphoneReturnResult } from "@lib/data/payphone"
 import {
-  PAYPHONE_CONFIRMING_COPY,
-  PAYPHONE_NO_CHARGE_COPY,
-  PAYPHONE_PENDING_NOTICE,
-  PAYPHONE_REVERSED_COPY,
+  payphoneReturnView,
+  type PayphoneReturnView,
 } from "@lib/payphone-return"
+import { PayphoneReturnCopy } from "./status"
 import { useEffect, useState } from "react"
 
-const CONFIRMING_MS = 30_000
 const INITIAL_DELAY_MS = 2_000
 const MAX_DELAY_MS = 30_000
-
-type Phase = "confirming" | "pending" | "reversed" | "rejected"
 
 export function PayphoneReturnPoller({
   country,
@@ -27,7 +23,9 @@ export function PayphoneReturnPoller({
   clientTransactionId: string
   initial: PayphoneReturnResult | null
 }) {
-  const [phase, setPhase] = useState<Phase>(() => phaseFrom(initial, 0))
+  const [phase, setPhase] = useState<PayphoneReturnView>(() =>
+    payphoneReturnView(initial, 0)
+  )
 
   useEffect(() => {
     const started = Date.now()
@@ -58,7 +56,7 @@ export function PayphoneReturnPoller({
         return true
       }
 
-      const next = phaseFrom(result, Date.now() - started)
+      const next = payphoneReturnView(result, Date.now() - started)
       setPhase(next)
       return next === "reversed" || next === "rejected"
     }
@@ -96,40 +94,5 @@ export function PayphoneReturnPoller({
     }
   }, [clientTransactionId, country, initial, payphoneId])
 
-  const copy =
-    phase === "reversed"
-      ? PAYPHONE_REVERSED_COPY
-      : phase === "rejected"
-        ? PAYPHONE_NO_CHARGE_COPY
-        : phase === "pending"
-          ? PAYPHONE_PENDING_NOTICE
-          : PAYPHONE_CONFIRMING_COPY
-
-  return (
-    <div className="content-container py-16">
-      {/* TODO(contacto): hace falta un contacto de soporte para el pago que sigue pendiente y para needs_reversal después de las 20:00, hora de Ecuador. Reverse no funciona pasado ese horario. */}
-      <p className="text-xl" role="status" data-testid="payphone-return-status">
-        {copy}
-      </p>
-    </div>
-  )
-}
-
-function phaseFrom(
-  result: PayphoneReturnResult | null,
-  elapsedMs: number
-): Phase {
-  if (result?.charge === "reversal_confirmed") {
-    return "reversed"
-  }
-
-  if (result?.charge === "none" || result?.state === "no_charge") {
-    return "rejected"
-  }
-
-  if (elapsedMs >= CONFIRMING_MS) {
-    return "pending"
-  }
-
-  return "confirming"
+  return <PayphoneReturnCopy view={phase} />
 }

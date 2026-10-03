@@ -15,3 +15,52 @@ export const PAYPHONE_DOCUMENT_COPY = "La cédula o el RUC no es válido."
 export function showsNoCharge(code: string | null | undefined) {
   return code === "no_charge" || code === "cancelled"
 }
+
+export type PayphoneReturnSnapshot = {
+  state?: string
+  code?: string
+  charge?: string
+  message?: string
+}
+
+export type PayphoneReturnView = "confirming" | "pending" | "reversed" | "rejected"
+
+const CONFIRMING_MS = 30_000
+
+/**
+ * Network and timeout leave the claim in `processing`. Moving it back to
+ * `pending`, including when Confirm names someone else's id, is the same
+ * shopper outcome: the long confirming notice, with no retry.
+ */
+export function keepsShopperConfirming(
+  result: PayphoneReturnSnapshot | null
+): boolean {
+  if (!result || result.charge !== "open") {
+    return false
+  }
+
+  return result.code === "pending" || result.code === "failed"
+}
+
+export function payphoneReturnView(
+  result: PayphoneReturnSnapshot | null,
+  elapsedMs: number
+): PayphoneReturnView {
+  if (result?.charge === "reversal_confirmed") {
+    return "reversed"
+  }
+
+  if (keepsShopperConfirming(result)) {
+    return "pending"
+  }
+
+  if (result?.charge === "none" || result?.state === "no_charge") {
+    return "rejected"
+  }
+
+  if (elapsedMs >= CONFIRMING_MS) {
+    return "pending"
+  }
+
+  return "confirming"
+}

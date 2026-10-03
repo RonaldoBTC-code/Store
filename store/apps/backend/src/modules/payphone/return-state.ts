@@ -19,8 +19,10 @@ export type PayphoneReturnState = "no_charge" | "confirming"
 
 /**
  * The no-charge sentence is only for a sale that never captured, or a
- * reversal PayPhone has already confirmed. An open charge stays on the
- * confirming copy so the shopper is not told the payment failed.
+ * reversal PayPhone has already confirmed. A network or timeout error
+ * leaves the claim in `processing`. `processing` → `pending` (PayPhone
+ * has no transaction, or the Confirm id belongs to someone else) is the
+ * same shopper outcome. Both stay on the confirming notice.
  */
 export function shopperReturnState(
   charge: PayphoneChargeState
