@@ -1,3 +1,4 @@
+import { MedusaError } from "@medusajs/framework/utils"
 import { isContinuousIntegration, type ProcessEnv } from "./database-ssl"
 
 /**
@@ -92,5 +93,8 @@ export function enforceStartupSecrets(
     return
   }
 
-  throw new Error(formatStartupSecretError(issues))
+  throw new MedusaError(
+    MedusaError.Types.INVALID_DATA,
+    formatStartupSecretError(issues)
+  )
 }

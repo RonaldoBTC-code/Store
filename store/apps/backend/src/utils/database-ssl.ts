@@ -1,4 +1,5 @@
 import fs from "fs"
+import { MedusaError } from "@medusajs/framework/utils"
 
 /**
  * SSL de Postgres para Medusa.
@@ -80,7 +81,8 @@ export function resolveDatabaseSsl(
   } else if (SSL_ENABLED.has(requested)) {
     enabled = true
   } else {
-    throw new Error(
+    throw new MedusaError(
+      MedusaError.Types.INVALID_DATA,
       "DATABASE_SSL tiene un valor no reconocido. Usa true (verificar certificado) o false (sin SSL)."
     )
   }
@@ -116,13 +118,15 @@ function loadCaCertificate(
   try {
     pem = readCaFile(raw)
   } catch {
-    throw new Error(
+    throw new MedusaError(
+      MedusaError.Types.INVALID_DATA,
       "DATABASE_CA_CERT debe ser un PEM o la ruta a un archivo PEM legible. No se pudo leer el certificado."
     )
   }
 
   if (!pem.trim()) {
-    throw new Error(
+    throw new MedusaError(
+      MedusaError.Types.INVALID_DATA,
       "DATABASE_CA_CERT apunta a un archivo vacío. Hace falta el PEM del CA."
     )
   }
