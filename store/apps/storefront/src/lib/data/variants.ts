@@ -1,6 +1,7 @@
 "use server"
 
 import { sdk } from "@lib/config"
+import { hasAuthHeaders } from "@lib/util/auth-headers"
 import { HttpTypes } from "@medusajs/types"
 
 import { getAuthHeaders, getCacheOptions } from "./cookies"
@@ -10,7 +11,7 @@ export const retrieveVariant = async (
 ): Promise<HttpTypes.StoreProductVariant | null> => {
   const authHeaders = await getAuthHeaders()
 
-  if (!authHeaders) return null
+  if (!hasAuthHeaders(authHeaders)) return null
 
   const headers = {
     ...authHeaders,

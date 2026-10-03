@@ -2,6 +2,7 @@
 import { setAddresses } from "@lib/data/cart"
 import useToggleState from "@lib/hooks/use-toggle-state"
 import compareAddresses from "@lib/util/compare-addresses"
+import { formatTaxIdLabel } from "@lib/util/ec-tax-id"
 import { CheckCircleSolid } from "@medusajs/icons"
 import { HttpTypes } from "@medusajs/types"
 import Divider from "@modules/common/components/divider"
@@ -38,6 +39,7 @@ const Addresses = ({
   }
 
   const [message, formAction] = useActionState(setAddresses, null)
+  const taxIdLabel = formatTaxIdLabel(cart?.billing_address?.metadata)
 
   return (
     <div className="bg-ink-950 text-white">
@@ -164,6 +166,14 @@ const Addresses = ({
                           {cart.billing_address?.country_code?.toUpperCase()}
                         </Text>
                       </>
+                    )}
+                    {taxIdLabel && (
+                      <Text
+                        className="txt-medium text-ui-fg-subtle"
+                        data-testid="billing-tax-id-summary"
+                      >
+                        {taxIdLabel}
+                      </Text>
                     )}
                   </div>
                 </div>

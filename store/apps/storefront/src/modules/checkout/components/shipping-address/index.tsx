@@ -1,3 +1,4 @@
+import { publicTaxIdState } from "@lib/util/ec-tax-id"
 import { HttpTypes } from "@medusajs/types"
 import { Container } from "@modules/common/components/ui"
 import Checkbox from "@modules/common/components/checkbox"
@@ -6,6 +7,7 @@ import { mapKeys } from "lodash"
 import React, { useEffect, useMemo, useState } from "react"
 import AddressSelect from "../address-select"
 import CountrySelect from "../country-select"
+import TaxIdField from "../tax-id-field"
 
 const ShippingAddress = ({
   customer,
@@ -30,6 +32,8 @@ const ShippingAddress = ({
     "shipping_address.phone": cart?.shipping_address?.phone || "",
     email: cart?.email || "",
   })
+
+  const taxState = publicTaxIdState(cart?.billing_address?.metadata)
 
   const countriesInRegion = useMemo(
     () => cart?.region?.countries?.map((c) => c.iso_2),
@@ -154,7 +158,6 @@ const ShippingAddress = ({
           autoComplete="postal-code"
           value={formData["shipping_address.postal_code"]}
           onChange={handleChange}
-          required
           data-testid="shipping-postal-code-input"
         />
         <Input
@@ -208,12 +211,19 @@ const ShippingAddress = ({
         <Input
           label="Phone"
           name="shipping_address.phone"
+          type="tel"
           autoComplete="tel"
           value={formData["shipping_address.phone"]}
           onChange={handleChange}
+          required
           data-testid="shipping-phone-input"
         />
       </div>
+      <TaxIdField
+        taxIdSet={taxState.taxIdSet}
+        taxIdKind={taxState.taxIdKind}
+        requireReentry={Boolean(cart?.shipping_address) && !taxState.taxIdSet}
+      />
     </>
   )
 }

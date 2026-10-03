@@ -85,7 +85,7 @@ const Shipping: React.FC<ShippingProps> = ({
     if (_shippingMethods?.length) {
       const promises = _shippingMethods
         .filter((sm) => sm.price_type === "calculated")
-        .map((sm) => calculatePriceForShippingOption(sm.id, cart.id))
+        .map((sm) => calculatePriceForShippingOption(sm.id))
 
       if (promises.length) {
         Promise.allSettled(promises).then((res) => {
@@ -136,7 +136,7 @@ const Shipping: React.FC<ShippingProps> = ({
       return id
     })
 
-    await setShippingMethod({ cartId: cart.id, shippingMethodId: id })
+    await setShippingMethod({ shippingMethodId: id })
       .catch((err) => {
         setShippingMethodId(currentId)
 

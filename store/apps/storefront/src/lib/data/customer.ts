@@ -1,6 +1,7 @@
 "use server"
 
 import { sdk } from "@lib/config"
+import { hasAuthHeaders } from "@lib/util/auth-headers"
 import medusaError from "@lib/util/medusa-error"
 import { HttpTypes } from "@medusajs/types"
 import { FetchError } from "@medusajs/js-sdk"
@@ -44,7 +45,7 @@ export const retrieveCustomer =
   async (): Promise<HttpTypes.StoreCustomer | null> => {
     const authHeaders = await getAuthHeaders()
 
-    if (!authHeaders) return null
+    if (!hasAuthHeaders(authHeaders)) return null
 
     const headers = {
       ...authHeaders,
