@@ -6,12 +6,7 @@ type SeedEnv = {
   DATABASE_URL?: string
 }
 
-const LOCAL_DATABASE_HOSTS = new Set([
-  "localhost",
-  "127.0.0.1",
-  "::1",
-  "postgres",
-])
+const LOCAL_DATABASE_HOSTS = new Set(["localhost", "127.0.0.1", "::1"])
 
 const PRODUCTION_NODE_ENVS = new Set(["production", "prod"])
 
@@ -19,8 +14,10 @@ const PRODUCTION_NODE_ENVS = new Set(["production", "prod"])
  * Product and demo seeds are for local dev and CI.
  * Base store setup used by `medusa db:migrate` does not call this.
  *
- * The database host is the primary check. NODE_ENV is also refused when it
- * normalizes to production or prod. Errors never include the connection string.
+ * The database host is the primary check. Only localhost, 127.0.0.1, and
+ * ::1 are local. A missing or empty DATABASE_URL is not local. NODE_ENV is
+ * also refused when it normalizes to production or prod. Errors never
+ * include the connection string.
  */
 export function assertSeedAllowed(env: SeedEnv = process.env) {
   if (env.ALLOW_PROD_SEED === "true") {
@@ -51,7 +48,7 @@ export function isProductionNodeEnv(nodeEnv: string | undefined) {
 
 export function databaseHostIsLocal(databaseUrl: string | undefined) {
   if (!databaseUrl?.trim()) {
-    return true
+    return false
   }
 
   const host = readDatabaseHost(databaseUrl)

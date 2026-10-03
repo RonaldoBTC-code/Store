@@ -11,19 +11,31 @@ import {
 const readSource = (relativePath: string) =>
   fs.readFileSync(path.join(__dirname, relativePath), "utf8")
 
+const LOCAL_DATABASE_URL = "postgres://medusa:medusa@127.0.0.1:5432/store"
+
 describe("assertSeedAllowed", () => {
   it("refuses production when ALLOW_PROD_SEED is unset", () => {
-    expect(() => assertSeedAllowed({ NODE_ENV: "production" })).toThrow(
-      MedusaError
-    )
-    expect(() => assertSeedAllowed({ NODE_ENV: "production" })).toThrow(
-      /ALLOW_PROD_SEED=true/
-    )
+    expect(() =>
+      assertSeedAllowed({
+        NODE_ENV: "production",
+        DATABASE_URL: LOCAL_DATABASE_URL,
+      })
+    ).toThrow(MedusaError)
+    expect(() =>
+      assertSeedAllowed({
+        NODE_ENV: "production",
+        DATABASE_URL: LOCAL_DATABASE_URL,
+      })
+    ).toThrow(/ALLOW_PROD_SEED=true/)
   })
 
   it("refuses production when the opt-in is any value other than true", () => {
     expect(() =>
-      assertSeedAllowed({ NODE_ENV: "production", ALLOW_PROD_SEED: "1" })
+      assertSeedAllowed({
+        NODE_ENV: "production",
+        ALLOW_PROD_SEED: "1",
+        DATABASE_URL: LOCAL_DATABASE_URL,
+      })
     ).toThrow(MedusaError)
   })
 
@@ -36,9 +48,12 @@ describe("assertSeedAllowed", () => {
   it("treats prod and any casing of production as production", () => {
     for (const nodeEnv of ["prod", "PROD", "Production", " production "]) {
       expect(isProductionNodeEnv(nodeEnv)).toBe(true)
-      expect(() => assertSeedAllowed({ NODE_ENV: nodeEnv })).toThrow(
-        /NODE_ENV=production/
-      )
+      expect(() =>
+        assertSeedAllowed({
+          NODE_ENV: nodeEnv,
+          DATABASE_URL: LOCAL_DATABASE_URL,
+        })
+      ).toThrow(/NODE_ENV=production/)
     }
   })
 
@@ -59,17 +74,20 @@ describe("assertSeedAllowed", () => {
     }
   })
 
-  it("allows non-production without the opt-in", () => {
-    expect(() => assertSeedAllowed({ NODE_ENV: "development" })).not.toThrow()
-    expect(() => assertSeedAllowed({})).not.toThrow()
+  it("allows non-production without the opt-in when the host is local", () => {
+    expect(() =>
+      assertSeedAllowed({
+        NODE_ENV: "development",
+        DATABASE_URL: LOCAL_DATABASE_URL,
+      })
+    ).not.toThrow()
   })
 
-  it("allows localhost, loopback, and the CI postgres service host", () => {
+  it("allows localhost and loopback hosts", () => {
     const urls = [
       "postgres://medusa:medusa@localhost:5432/store",
       "postgres://medusa:medusa@127.0.0.1:5432/store",
       "postgres://medusa:medusa@[::1]:5432/store",
-      "postgres://medusa:medusa@postgres:5432/store",
     ]
 
     for (const databaseUrl of urls) {
@@ -77,6 +95,42 @@ describe("assertSeedAllowed", () => {
         assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: databaseUrl })
       ).not.toThrow()
     }
+  })
+
+  it("refuses a missing or empty DATABASE_URL", () => {
+    expect(() => assertSeedAllowed({ NODE_ENV: "development" })).toThrow(
+      /database host is non-local/
+    )
+    expect(() => assertSeedAllowed({})).toThrow(/database host is non-local/)
+    expect(() =>
+      assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: "   " })
+    ).toThrow(/database host is non-local/)
+    expect(() =>
+      assertSeedAllowed({ ALLOW_PROD_SEED: "true" })
+    ).not.toThrow()
+  })
+
+  it("refuses the postgres hostname unless ALLOW_PROD_SEED=true", () => {
+    const databaseUrl = "postgres://medusa:medusa@postgres:5432/store"
+
+    expect(() =>
+      assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: databaseUrl })
+    ).toThrow(/database host is non-local/)
+
+    try {
+      assertSeedAllowed({ NODE_ENV: "development", DATABASE_URL: databaseUrl })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      expect(message).not.toContain(databaseUrl)
+    }
+
+    expect(() =>
+      assertSeedAllowed({
+        NODE_ENV: "development",
+        ALLOW_PROD_SEED: "true",
+        DATABASE_URL: databaseUrl,
+      })
+    ).not.toThrow()
   })
 
   it("refuses a non-local database host without printing the connection string", () => {
