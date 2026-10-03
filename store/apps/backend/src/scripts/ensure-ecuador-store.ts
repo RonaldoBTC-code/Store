@@ -11,11 +11,14 @@ import {
 } from "./ecuador-zone-cleanup"
 import {
   chooseShippingFulfillmentSet,
+  findDefaultShippingProfile,
+  matchExactName,
   namedStockLocation,
   paymentProvidersForRegion,
   planIva,
   planRegionCountries,
   planStoreCurrencies,
+  reusedRegionCurrencyWarning,
   SYSTEM_PAYMENT_PROVIDER_ID,
 } from "./ecuador-store-policy"
 import {
@@ -286,13 +289,14 @@ async function ensureSalesChannel(
     fields: ["id", "name"],
   })
   const channels = (data ?? []) as SalesChannelRecord[]
-  const existing = channels.find(
-    (channel) => channel.name === SALES_CHANNEL_NAME
-  )
+  const match = matchExactName(channels, SALES_CHANNEL_NAME, "sales channel")
+  if (match.status === "duplicate") {
+    throw new MedusaError(MedusaError.Types.INVALID_DATA, match.message)
+  }
 
-  if (existing) {
-    logger.info(`Sales channel already exists (${existing.name}).`)
-    return existing.id
+  if (match.status === "one") {
+    logger.info(`Sales channel already exists (${match.record.name}).`)
+    return match.record.id
   }
 
   const {
@@ -523,6 +527,18 @@ async function ensureRegion(
   }
 
   const codes = countryCodesOf(existing)
+  const currencyWarning = reusedRegionCurrencyWarning({
+    countryCodes: codes,
+    currencyCode: existing.currency_code,
+    regionName: existing.name,
+    regionId: existing.id,
+    countryCode: COUNTRY_CODE,
+    expectedCurrency: CURRENCY_CODE,
+  })
+  if (currencyWarning) {
+    logger.warn(currencyWarning)
+  }
+
   const countryPlan = planRegionCountries({
     regionId: existing.id,
     regionName: existing.name,
@@ -731,8 +747,7 @@ async function ensureShippingProfile(
     fields: ["id", "type"],
   })
   const profiles = (data ?? []) as ShippingProfileRecord[]
-  const existing =
-    profiles.find((profile) => profile.type === "default") ?? profiles[0]
+  const existing = findDefaultShippingProfile(profiles)
 
   if (existing) {
     return existing.id
@@ -748,8 +763,15 @@ async function ensureShippingProfile(
       ],
     },
   })
+  const createdId = result[0]?.id
+  if (!createdId) {
+    throw new MedusaError(
+      MedusaError.Types.UNEXPECTED_STATE,
+      'No shipping profile with type "default" exists, and creating one failed.'
+    )
+  }
   logger.info("Created the default shipping profile.")
-  return result[0].id
+  return createdId
 }
 
 async function ensureFulfillment(

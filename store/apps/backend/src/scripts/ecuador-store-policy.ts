@@ -184,6 +184,71 @@ export function chooseShippingFulfillmentSet<T extends FulfillmentSetChoice>(
   )
 }
 
+export type ExactNameMatch<T> =
+  | { status: "missing" }
+  | { status: "one"; record: T }
+  | { status: "duplicate"; message: string }
+
+/**
+ * Matches a record by exact name. More than one match is an error so the
+ * caller does not silently use the first.
+ */
+export function matchExactName<T extends { id: string; name?: string | null }>(
+  records: T[],
+  name: string,
+  label = "record"
+): ExactNameMatch<T> {
+  const matches = records.filter((record) => record.name === name)
+  if (matches.length > 1) {
+    const ids = matches.map((record) => record.id).join(", ")
+    return {
+      status: "duplicate",
+      message: `More than one ${label} is named "${name}" (${ids}). Refusing to pick one.`,
+    }
+  }
+  if (matches.length === 1) {
+    return { status: "one", record: matches[0] }
+  }
+  return { status: "missing" }
+}
+
+/**
+ * The default shipping profile is the one whose type is "default".
+ * Another profile is not a substitute.
+ */
+export function findDefaultShippingProfile<
+  T extends { type?: string | null },
+>(profiles: T[]): T | null {
+  return profiles.find((profile) => profile.type === "default") ?? null
+}
+
+/**
+ * A region that already includes ec is reused even when its currency is
+ * not USD. The caller logs the warning and does not change the currency.
+ */
+export function reusedRegionCurrencyWarning(input: {
+  countryCodes: string[]
+  currencyCode?: string | null
+  regionName?: string | null
+  regionId: string
+  countryCode?: string
+  expectedCurrency?: string
+}): string | undefined {
+  const countryCode = (input.countryCode ?? ECUADOR_COUNTRY_CODE).toLowerCase()
+  const expected = (input.expectedCurrency ?? "usd").toLowerCase()
+  const codes = input.countryCodes.map((code) => code.toLowerCase())
+  if (!codes.includes(countryCode)) {
+    return undefined
+  }
+  const currency = input.currencyCode?.trim().toLowerCase()
+  if (currency === expected) {
+    return undefined
+  }
+  const shown = input.currencyCode?.trim() || "unset"
+  const name = input.regionName?.trim() || input.regionId
+  return `Region "${name}" (${input.regionId}) already includes country ${countryCode} but its currency is ${shown}, not ${expected}. Reusing it without changing the currency.`
+}
+
 export function namedStockLocation<T extends { name?: string | null }>(
   locations: T[],
   name = ECUADOR_STOCK_LOCATION_NAME

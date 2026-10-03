@@ -21,10 +21,13 @@ import {
   capCategory,
   capCollection,
   capProducts,
+  listInvalidCapPrices,
   listMissingCapSeedFields,
+  listZeroCapStockWarnings,
   type CapSeed,
 } from "../data/cap-products"
 import { assertSeedAllowed } from "./assert-seed-allowed"
+import { findDefaultShippingProfile, matchExactName } from "./ecuador-store-policy"
 
 const ECUADOR_LOCATION_NAME = "Ecuador"
 const SALES_CHANNEL_NAME = "Default Sales Channel"
@@ -49,7 +52,10 @@ type VariantRecord = {
 
 type Query = { graph: Function }
 
-type Logger = { info: (message: string) => void }
+type Logger = {
+  info: (message: string) => void
+  warn: (message: string) => void
+}
 
 type Link = { create: (data: object) => Promise<unknown> }
 
@@ -86,6 +92,21 @@ export default async function seedCapProducts({ container }: ExecArgs) {
     )
   }
 
+  const invalidPrices = listInvalidCapPrices()
+  if (invalidPrices.length) {
+    throw new MedusaError(
+      MedusaError.Types.INVALID_DATA,
+      [
+        "Cap seed refused. Each priceUsd must be a finite USD amount greater than 0.",
+        ...invalidPrices.map((line) => `- ${line}`),
+      ].join("\n")
+    )
+  }
+
+  for (const warning of listZeroCapStockWarnings()) {
+    logger.warn(warning)
+  }
+
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const link = container.resolve(ContainerRegistrationKeys.LINK)
 
@@ -108,23 +129,29 @@ export default async function seedCapProducts({ container }: ExecArgs) {
     entity: "sales_channel",
     fields: ["id", "name"],
   })
-  const salesChannel = (
-    (channels ?? []) as { id: string; name?: string | null }[]
-  ).find((channel) => channel.name === SALES_CHANNEL_NAME)
-  if (!salesChannel) {
+  const channelMatch = matchExactName(
+    (channels ?? []) as { id: string; name?: string | null }[],
+    SALES_CHANNEL_NAME,
+    "sales channel"
+  )
+  if (channelMatch.status === "duplicate") {
+    throw new MedusaError(MedusaError.Types.INVALID_DATA, channelMatch.message)
+  }
+  if (channelMatch.status === "missing") {
     throw new MedusaError(
       MedusaError.Types.NOT_FOUND,
       `Sales channel "${SALES_CHANNEL_NAME}" not found. Run pnpm seed:ec before pnpm seed:caps.`
     )
   }
+  const salesChannel = channelMatch.record
 
   const { data: profiles } = await query.graph({
     entity: "shipping_profile",
     fields: ["id", "type"],
   })
-  const shippingProfile = (
+  const shippingProfile = findDefaultShippingProfile(
     (profiles ?? []) as { id: string; type?: string | null }[]
-  ).find((profile) => profile.type === "default")
+  )
   if (!shippingProfile) {
     throw new MedusaError(
       MedusaError.Types.NOT_FOUND,

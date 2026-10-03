@@ -1,10 +1,13 @@
 import {
   chooseShippingFulfillmentSet,
+  findDefaultShippingProfile,
+  matchExactName,
   namedStockLocation,
   paymentProvidersForRegion,
   planIva,
   planRegionCountries,
   planStoreCurrencies,
+  reusedRegionCurrencyWarning,
   SYSTEM_PAYMENT_PROVIDER_ID,
 } from "../ecuador-store-policy"
 
@@ -127,6 +130,91 @@ describe("chooseShippingFulfillmentSet", () => {
         { id: "fset_named_pickup", name: "Envíos Ecuador", type: "pickup" },
       ])
     ).toBeNull()
+  })
+})
+
+describe("matchExactName", () => {
+  it("fails when more than one sales channel has the exact name", () => {
+    const match = matchExactName(
+      [
+        { id: "sc_1", name: "Default Sales Channel" },
+        { id: "sc_other", name: "Wholesale" },
+        { id: "sc_2", name: "Default Sales Channel" },
+      ],
+      "Default Sales Channel",
+      "sales channel"
+    )
+
+    expect(match.status).toBe("duplicate")
+    if (match.status === "duplicate") {
+      expect(match.message).toContain("sc_1")
+      expect(match.message).toContain("sc_2")
+      expect(match.message).toContain("Refusing to pick one")
+    }
+  })
+
+  it("returns the single exact match and ignores a different name", () => {
+    expect(
+      matchExactName(
+        [
+          { id: "sc_other", name: "Default Sales Channel extra" },
+          { id: "sc_1", name: "Default Sales Channel" },
+        ],
+        "Default Sales Channel",
+        "sales channel"
+      )
+    ).toEqual({
+      status: "one",
+      record: { id: "sc_1", name: "Default Sales Channel" },
+    })
+    expect(matchExactName([], "Default Sales Channel").status).toBe("missing")
+  })
+})
+
+describe("findDefaultShippingProfile", () => {
+  it("uses type default and does not fall back to the first profile", () => {
+    const custom = { id: "sp_custom", type: "custom" }
+    const fallback = { id: "sp_first", type: "gift" }
+    const standard = { id: "sp_default", type: "default" }
+
+    expect(findDefaultShippingProfile([custom, fallback])).toBeNull()
+    expect(findDefaultShippingProfile([custom, standard])).toEqual(standard)
+    expect(findDefaultShippingProfile([])).toBeNull()
+  })
+})
+
+describe("reusedRegionCurrencyWarning", () => {
+  it("warns when a region that already includes ec is not USD", () => {
+    const warning = reusedRegionCurrencyWarning({
+      countryCodes: ["ec", "co"],
+      currencyCode: "eur",
+      regionName: "Andes",
+      regionId: "reg_andes",
+    })
+
+    expect(warning).toContain("reg_andes")
+    expect(warning).toContain("eur")
+    expect(warning).toContain("not usd")
+    expect(warning).toContain("without changing the currency")
+  })
+
+  it("stays quiet when the region is already USD or does not include ec", () => {
+    expect(
+      reusedRegionCurrencyWarning({
+        countryCodes: ["ec"],
+        currencyCode: "USD",
+        regionName: "Ecuador",
+        regionId: "reg_ec",
+      })
+    ).toBeUndefined()
+    expect(
+      reusedRegionCurrencyWarning({
+        countryCodes: [],
+        currencyCode: "eur",
+        regionName: "Ecuador",
+        regionId: "reg_named",
+      })
+    ).toBeUndefined()
   })
 })
 

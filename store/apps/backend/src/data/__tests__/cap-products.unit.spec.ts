@@ -1,7 +1,9 @@
 import {
   TODO,
   capProducts,
+  listInvalidCapPrices,
   listMissingCapSeedFields,
+  listZeroCapStockWarnings,
   type CapSeed,
 } from "../cap-products"
 
@@ -47,5 +49,44 @@ describe("cap product seed data", () => {
         },
       ])
     ).toEqual(["fish-hug.sku"])
+  })
+
+  it("rejects a price that is not a finite amount greater than 0", () => {
+    for (const priceUsd of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const errors = listInvalidCapPrices([
+        {
+          ...filledCap(),
+          sku: "FISH-HUG",
+          priceUsd,
+        },
+      ])
+
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toContain("sku FISH-HUG")
+      expect(errors[0]).toContain("handle fish-hug")
+      expect(errors[0]).toContain("greater than 0")
+    }
+
+    expect(
+      listInvalidCapPrices([
+        {
+          ...filledCap(),
+          sku: TODO,
+          priceUsd: 0,
+        },
+      ])[0]
+    ).toContain("handle fish-hug")
+    expect(listInvalidCapPrices([filledCap()])).toEqual([])
+  })
+
+  it("warns when stocked quantity is 0 and stays quiet otherwise", () => {
+    const warnings = listZeroCapStockWarnings([filledCap()])
+
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain("sku FISH-HUG")
+    expect(warnings[0]).toContain("is 0")
+    expect(
+      listZeroCapStockWarnings([{ ...filledCap(), stockedQuantity: 4 }])
+    ).toEqual([])
   })
 })

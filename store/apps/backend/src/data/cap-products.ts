@@ -116,11 +116,7 @@ export function listMissingCapSeedFields(
       missing.push(`${prefix}.sku`)
     }
 
-    if (
-      typeof product.priceUsd !== "number" ||
-      !Number.isFinite(product.priceUsd) ||
-      product.priceUsd < 0
-    ) {
+    if (typeof product.priceUsd !== "number") {
       missing.push(`${prefix}.priceUsd`)
     }
 
@@ -134,4 +130,66 @@ export function listMissingCapSeedFields(
   }
 
   return missing
+}
+
+const capIdentity = (product: CapSeed) => {
+  const handle = product.handle?.trim()
+  const sku =
+    typeof product.sku === "string" &&
+    product.sku.trim() !== "" &&
+    product.sku !== TODO
+      ? product.sku.trim()
+      : ""
+  if (sku && handle) {
+    return `sku ${sku} (handle ${handle})`
+  }
+  if (sku) {
+    return `sku ${sku}`
+  }
+  if (handle) {
+    return `handle ${handle}`
+  }
+  return product.title?.trim() || "cap"
+}
+
+/**
+ * A numeric price must be finite and greater than 0. TODO prices are
+ * reported by listMissingCapSeedFields instead.
+ */
+export function listInvalidCapPrices(
+  products: CapSeed[] = capProducts
+): string[] {
+  const errors: string[] = []
+
+  for (const product of products) {
+    if (typeof product.priceUsd !== "number") {
+      continue
+    }
+    if (!Number.isFinite(product.priceUsd) || product.priceUsd <= 0) {
+      errors.push(
+        `Price for ${capIdentity(product)} must be a finite USD amount greater than 0.`
+      )
+    }
+  }
+
+  return errors
+}
+
+/**
+ * Zero stock is allowed. The seed logs these so an empty level is visible.
+ */
+export function listZeroCapStockWarnings(
+  products: CapSeed[] = capProducts
+): string[] {
+  const warnings: string[] = []
+
+  for (const product of products) {
+    if (product.stockedQuantity === 0) {
+      warnings.push(
+        `Stock for ${capIdentity(product)} is 0. The variant will be created with no units at the Ecuador location.`
+      )
+    }
+  }
+
+  return warnings
 }
