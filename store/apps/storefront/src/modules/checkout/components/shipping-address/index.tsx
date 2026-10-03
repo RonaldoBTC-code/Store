@@ -22,7 +22,6 @@ const ShippingAddress = ({
     "shipping_address.first_name": cart?.shipping_address?.first_name || "",
     "shipping_address.last_name": cart?.shipping_address?.last_name || "",
     "shipping_address.address_1": cart?.shipping_address?.address_1 || "",
-    "shipping_address.company": cart?.shipping_address?.company || "",
     "shipping_address.postal_code": cart?.shipping_address?.postal_code || "",
     "shipping_address.city": cart?.shipping_address?.city || "",
     "shipping_address.country_code": cart?.shipping_address?.country_code || "",
@@ -55,7 +54,6 @@ const ShippingAddress = ({
         "shipping_address.first_name": address?.first_name || "",
         "shipping_address.last_name": address?.last_name || "",
         "shipping_address.address_1": address?.address_1 || "",
-        "shipping_address.company": address?.company || "",
         "shipping_address.postal_code": address?.postal_code || "",
         "shipping_address.city": address?.city || "",
         "shipping_address.country_code": address?.country_code || "",
@@ -207,12 +205,7 @@ const ShippingAddress = ({
           data-testid="shipping-country-select"
         />
       </div>
-      {/* Empresa no se muestra. El valor guardado sigue enviándose para no cambiar el payload. */}
-      <input
-        type="hidden"
-        name="shipping_address.company"
-        value={formData["shipping_address.company"]}
-      />
+      <input type="hidden" name="shipping_address.company" value="" />
       <div className="my-8">
         <Checkbox
           label="La facturación es igual al envío"
