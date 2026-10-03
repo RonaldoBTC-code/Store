@@ -1,3 +1,4 @@
+import { medusaIntegrationTestRunner } from "@medusajs/test-utils"
 import { isUniqueViolation } from "../../src/modules/btcpay/claim"
 import { hashClientIp, hashSessionId } from "../../src/modules/btcpay/limits"
 import {
@@ -10,11 +11,22 @@ import {
   pgTx,
   redactClosedPersonalData,
 } from "../../src/modules/btcpay/payment-sql"
-import {
-  btcpayMigrationDown,
-  btcpayMigrationUp,
-} from "../../src/modules/btcpay-claim/migrations/sql"
-import { btcpayTestDatabaseUrl } from "../../src/modules/btcpay/test-database"
+
+if (process.env.DB_HOST === "127.0.0.1") {
+  process.env.DB_HOST = "localhost"
+}
+
+jest.setTimeout(120_000)
+
+process.env.JWT_SECRET ??= "supersecret"
+process.env.COOKIE_SECRET ??= "supersecret"
+process.env.STORE_CORS ??= "http://localhost:8000"
+process.env.ADMIN_CORS ??= "http://localhost:9000"
+process.env.AUTH_CORS ??= "http://localhost:9000"
+process.env.BTCPAY_URL ??= "https://btcpay.example"
+process.env.BTCPAY_STORE_ID ??= "store123"
+process.env.BTCPAY_API_KEY ??= "test-key"
+process.env.BTCPAY_WEBHOOK_SECRET ??= "webhook-secret"
 
 const SECRET = "server-secret"
 
@@ -62,12 +74,6 @@ function createPool(connectionString: string): PgPool {
   return new loaded.Pool({ connectionString })
 }
 
-async function runAll(pool: PgPool, statements: string[]) {
-  for (const statement of statements) {
-    await pool.query(statement)
-  }
-}
-
 function acquireInput(overrides: {
   cartId: string
   sessionId: string
@@ -93,25 +99,18 @@ function acquireInput(overrides: {
   }
 }
 
+medusaIntegrationTestRunner({
+  moduleName: "btcpay",
+  testSuite: ({ dbConfig, getContainer }) => {
 describe("BTCPay Postgres constraints", () => {
   let pool: PgPool
 
-  beforeAll(async () => {
-    const connectionString = btcpayTestDatabaseUrl()
-    pool = createPool(connectionString)
-    await pool.query(`DROP TABLE IF EXISTS "btcpay_payment" CASCADE`)
-    await pool.query(`DROP TABLE IF EXISTS "btcpay_invoice_claim" CASCADE`)
-    await runAll(pool, btcpayMigrationUp)
+  beforeEach(() => {
+    pool = createPool(dbConfig.clientUrl)
   })
 
-  afterAll(async () => {
-    if (pool) {
-      await pool.end()
-    }
-  })
-
-  beforeEach(async () => {
-    await pool.query(`TRUNCATE "btcpay_payment", "btcpay_invoice_claim"`)
+  afterEach(async () => {
+    await pool?.end()
   })
 
   it("stores integer cents and no float amount columns", async () => {
@@ -565,46 +564,6 @@ describe("BTCPay Postgres constraints", () => {
     }
   })
 
-  it("drops both tables on down and recreates the final schema", async () => {
-    try {
-      await runAll(pool, btcpayMigrationDown)
-      const tables = await pool.query(
-        `SELECT tablename FROM pg_tables
-         WHERE tablename IN ('btcpay_payment', 'btcpay_invoice_claim')`
-      )
-      expect(tables.rows).toHaveLength(0)
-
-      await runAll(pool, btcpayMigrationUp)
-      const columns = await pool.query(
-        `SELECT "table_name", "column_name"
-         FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND column_name IN ('payment_session_id', 'payment_session_hash', 'amount_cents')`
-      )
-      const names = columns.rows.map((row) => `${row.table_name}.${row.column_name}`)
-      expect(names).toContain("btcpay_payment.payment_session_hash")
-      expect(names).toContain("btcpay_invoice_claim.payment_session_hash")
-      expect(names).toContain("btcpay_payment.amount_cents")
-      expect(names).not.toContain("btcpay_payment.payment_session_id")
-      const indexes = await pool.query(
-        `SELECT indexname FROM pg_indexes
-         WHERE indexname IN (
-           'IDX_btcpay_payment_open_cart_unique',
-           'IDX_btcpay_payment_provider_invoice_id_unique'
-         )`
-      )
-      expect(indexes.rows).toHaveLength(2)
-    } finally {
-      await resetSchema()
-    }
-  })
-
-  async function resetSchema() {
-    await pool.query(`DROP TABLE IF EXISTS "btcpay_payment" CASCADE`)
-    await pool.query(`DROP TABLE IF EXISTS "btcpay_invoice_claim" CASCADE`)
-    await runAll(pool, btcpayMigrationUp)
-  }
-
   async function acquireCommitted(input: ReturnType<typeof acquireInput>) {
     const client = await pool.connect()
     try {
@@ -644,4 +603,50 @@ describe("BTCPay Postgres constraints", () => {
       client.release()
     }
   }
+})
+
+describe("BTCPay migration down", () => {
+  it("reverts the module migration and runs it again on the temporary database", async () => {
+    const { MedusaAppLoader } = await import("@medusajs/framework")
+    const loader = new MedusaAppLoader({ container: getContainer() })
+    await loader.runModulesMigrations({
+      action: "revert",
+      moduleNames: ["btcpayClaim"],
+    })
+
+    const pool = createPool(dbConfig.clientUrl)
+    try {
+      const tables = await pool.query(
+        `SELECT tablename FROM pg_tables
+         WHERE tablename IN ('btcpay_payment', 'btcpay_invoice_claim')`
+      )
+      expect(tables.rows).toHaveLength(0)
+
+      await loader.runModulesMigrations()
+
+      const columns = await pool.query(
+        `SELECT "table_name", "column_name"
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND column_name IN ('payment_session_id', 'payment_session_hash', 'amount_cents')`
+      )
+      const names = columns.rows.map((row) => `${row.table_name}.${row.column_name}`)
+      expect(names).toContain("btcpay_payment.payment_session_hash")
+      expect(names).toContain("btcpay_invoice_claim.payment_session_hash")
+      expect(names).toContain("btcpay_payment.amount_cents")
+      expect(names).not.toContain("btcpay_payment.payment_session_id")
+      const indexes = await pool.query(
+        `SELECT indexname FROM pg_indexes
+         WHERE indexname IN (
+           'IDX_btcpay_payment_open_cart_unique',
+           'IDX_btcpay_payment_provider_invoice_id_unique'
+         )`
+      )
+      expect(indexes.rows).toHaveLength(2)
+    } finally {
+      await pool.end()
+    }
+  })
+})
+  },
 })

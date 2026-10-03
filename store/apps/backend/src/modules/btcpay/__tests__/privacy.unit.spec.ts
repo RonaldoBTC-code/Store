@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "crypto"
-import { btcpayMigrationUp } from "../../btcpay-claim/migrations/sql"
+import { btcpayMigrationUp } from "../../btcpay-claim/migration-sql"
 import {
   hashClientIp,
   hashPersonal,

@@ -100,19 +100,16 @@ export async function GET(req: MedusaStoreRequest, res: MedusaResponse) {
       entry.id === lookup.paymentSessionId &&
       entry.provider_id?.startsWith("pp_btcpay_")
   )
-  const actorId = customerActorId(req)
-  if (
-    !cart?.id ||
-    !callerOwnsCart({
-      actorId,
-      cartCustomerId:
-        typeof cart?.customer_id === "string" && cart.customer_id
-          ? cart.customer_id
-          : null,
-      paymentSessionId: lookup.paymentSessionId,
-      cartSessionId: session?.id ?? null,
-    })
-  ) {
+  const ownsCart = callerOwnsCart({
+    actorId: customerActorId(req),
+    cartCustomerId:
+      typeof cart?.customer_id === "string" && cart.customer_id
+        ? cart.customer_id
+        : null,
+    paymentSessionId: lookup.paymentSessionId,
+    cartSessionId: session?.id ?? null,
+  })
+  if (!ownsCart || !cart?.id || !session?.id) {
     res.status(404).json(publicStatus({ state: "failed", message: STATUS_NOT_FOUND }))
     return
   }
@@ -128,11 +125,6 @@ export async function GET(req: MedusaStoreRequest, res: MedusaResponse) {
         message: "Bitcoin solo está disponible para Ecuador.",
       })
     )
-    return
-  }
-
-  if (!session) {
-    res.status(404).json(publicStatus({ state: "failed", message: STATUS_NOT_FOUND }))
     return
   }
 

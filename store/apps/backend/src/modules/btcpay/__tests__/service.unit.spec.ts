@@ -155,6 +155,10 @@ function webhook(
 }
 
 describe("BTCPay payment provider", () => {
+  it("accepts a provider registered with environment variables and no options object", () => {
+    expect(() => BtcpayPaymentProviderService.validateOptions(undefined)).not.toThrow()
+  })
+
   it("creates a USD invoice tied to the cart and payment session", async () => {
     const client = mockClient()
     client.createInvoice.mockResolvedValue(invoice())

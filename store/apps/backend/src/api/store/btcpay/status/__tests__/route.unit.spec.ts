@@ -54,8 +54,7 @@ describe("GET /store/btcpay/status", () => {
     }
   })
 
-  it("returns the same 404 for a missing lookup, an unknown cart, and a foreign cart", async () => {
-    const missing = await callGet({})
+  it("returns the same status and body for an unknown cart and a foreign cart", async () => {
     const unknown = await callGet({
       query: { cart_id: "cart_missing", payment_session_id: "payses_missing" },
       carts: [],
@@ -72,14 +71,14 @@ describe("GET /store/btcpay/status", () => {
       ],
     })
 
-    expect(missing.statusCode).toBe(404)
+    expect(unknown.queries).toBe(1)
+    expect(foreign.queries).toBe(1)
+    expect(unknown.statusCode).toBe(foreign.statusCode)
+    expect(unknown.body).toEqual(foreign.body)
     expect(unknown.statusCode).toBe(404)
-    expect(foreign.statusCode).toBe(404)
-    expect(missing.body).toEqual(NOT_FOUND_BODY)
-    expect(unknown.body).toEqual(missing.body)
-    expect(foreign.body).toEqual(missing.body)
-    expect(JSON.stringify(foreign.body)).not.toContain("cart_foreign")
+    expect(unknown.body).toEqual(NOT_FOUND_BODY)
     expect(JSON.stringify(unknown.body)).not.toContain("cart_missing")
+    expect(JSON.stringify(foreign.body)).not.toContain("cart_foreign")
     expect(JSON.stringify(foreign.body)).not.toContain("cus_owner")
   })
 })
@@ -109,11 +108,15 @@ function cart(input: { id: string; customerId: string | null; sessionId: string 
 }
 
 async function callGet(input: {
-  query?: Record<string, string>
-  carts?: Cart[]
+  query: Record<string, string>
+  carts: Cart[]
   actorId?: string
 }) {
-  const body: { statusCode: number; body?: unknown } = { statusCode: 200 }
+  let queries = 0
+  const body: { statusCode: number; body?: unknown; queries: number } = {
+    statusCode: 200,
+    queries: 0,
+  }
   const res = {
     status(code: number) {
       body.statusCode = code
@@ -126,17 +129,21 @@ async function callGet(input: {
   }
   const req = {
     ip: "203.0.113.50",
-    query: input.query ?? {},
+    query: input.query,
     socket: { remoteAddress: "203.0.113.50" },
     auth_context: input.actorId
       ? { actor_type: "customer", actor_id: input.actorId }
       : undefined,
     scope: {
       resolve: () => ({
-        graph: async () => ({ data: input.carts ?? [] }),
+        graph: async () => {
+          queries += 1
+          return { data: input.carts }
+        },
       }),
     },
   }
   await GET(req as unknown as MedusaStoreRequest, res as unknown as MedusaResponse)
+  body.queries = queries
   return body
 }

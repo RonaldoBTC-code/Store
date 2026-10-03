@@ -1,5 +1,5 @@
 import { Migration } from "@medusajs/framework/mikro-orm/migrations"
-import { btcpayMigrationDown, btcpayMigrationUp } from "./sql"
+import { btcpayMigrationDown, btcpayMigrationUp } from "../migration-sql"
 
 /**
  * BTCPay claim and payment tables in their final shape: integer cents,

@@ -109,9 +109,10 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
   protected readonly config_: ResolvedConfig
   private readonly fallbackPayments_ = new MemoryBtcpayPaymentStore()
 
-  static validateOptions(options: Record<string, unknown>): void {
+  static validateOptions(options?: Record<string, unknown>): void {
+    const source = options ?? {}
     for (const key of ["url", "storeId", "apiKey", "webhookSecret"] as const) {
-      if (options[key] != null && typeof options[key] !== "string") {
+      if (source[key] != null && typeof source[key] !== "string") {
         throw new MedusaError(
           MedusaError.Types.INVALID_DATA,
           `BTCPay provider option ${key} must be a string.`
