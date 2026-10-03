@@ -254,6 +254,12 @@ const Payment = ({
             data-testid="payment-method-error-message"
           />
 
+          {isLoading && isPayphone(selectedPaymentMethod) && (
+            <Text className="txt-medium text-ui-fg-subtle mt-6" data-testid="payphone-payment-waiting">
+              Te estamos llevando a PayPhone para completar el pago.
+            </Text>
+          )}
+
           <Button
             size="large"
             className="mt-6"
@@ -265,11 +271,13 @@ const Payment = ({
             }
             data-testid="submit-payment-button"
           >
-            {isPayphone(selectedPaymentMethod)
-              ? "Pagar con PayPhone"
-              : !activeSession && isStripeLike(selectedPaymentMethod)
-                ? "Enter payment details"
-                : "Continue to review"}
+            {isPayphone(selectedPaymentMethod) ? (
+              <span data-testid="payphone-payment-button">Pagar con PayPhone</span>
+            ) : !activeSession && isStripeLike(selectedPaymentMethod) ? (
+              "Enter payment details"
+            ) : (
+              "Continue to review"
+            )}
           </Button>
         </div>
 

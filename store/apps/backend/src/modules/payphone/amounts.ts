@@ -2,15 +2,12 @@ import type { BigNumberInput } from "@medusajs/framework/types"
 import { BigNumber, MathBN, MedusaError } from "@medusajs/framework/utils"
 
 /**
- * Ecuador IVA is included in Medusa's USD prices. PayPhone expects the
- * tax-inclusive total split into integer cents:
+ * PayPhone's documented identity, in integer cents:
  * amount = amountWithoutTax + amountWithTax + tax + service + tip.
+ * amountWithTax is the taxable base (tax not included).
+ * amountWithoutTax is the slice of the total that has no tax.
  * https://docs.payphone.app/boton-de-pago
  */
-const IVA_NUMERATOR = 15
-const IVA_DENOMINATOR = 115
-const USD_MULTIPLIER = 100
-
 export type PayphoneAmountSplit = {
   amount: number
   amountWithoutTax: number
@@ -20,13 +17,27 @@ export type PayphoneAmountSplit = {
   tip: number
 }
 
+export type CartChargeTotals = {
+  /** Medusa cart.total, major units, tax-inclusive. */
+  total: BigNumberInput
+  /** Medusa cart.tax_total, major units. Already computed by Medusa. */
+  taxTotal: BigNumberInput
+  /**
+   * Major-unit slice of `total` that Medusa did not tax
+   * (for example shipping whose shipping_tax_total is 0).
+   */
+  untaxedTotal?: BigNumberInput
+}
+
+/**
+ * Converts a Medusa major-unit USD amount to integer cents.
+ * Half a cent rounds away from zero. The scaled decimal comes from
+ * MathBN, then the rounding uses the decimal string, not a binary float.
+ */
 export function toUsdCents(amount: BigNumberInput): number {
-  const roundedMajor =
-    Math.round(new BigNumber(MathBN.mult(amount, USD_MULTIPLIER)).numeric) /
-    USD_MULTIPLIER
-  const smallest = new BigNumber(MathBN.mult(roundedMajor, USD_MULTIPLIER))
-  const whole = smallest.numeric.toString().split(".")[0]
-  const cents = Number.parseInt(whole ?? "", 10)
+  const scaled = new BigNumber(MathBN.mult(amount, 100))
+  const raw = String(scaled.raw?.value ?? scaled.numeric)
+  const cents = roundHalfAwayFromZero(raw)
 
   if (!Number.isSafeInteger(cents)) {
     throw new MedusaError(MedusaError.Types.INVALID_DATA, "Monto inválido")
@@ -40,44 +51,92 @@ export function centsToUsd(cents: number): number {
     throw new MedusaError(MedusaError.Types.INVALID_DATA, "Monto inválido")
   }
 
-  return new BigNumber(MathBN.div(cents, USD_MULTIPLIER)).numeric
+  return new BigNumber(MathBN.div(cents, 100)).numeric
 }
 
 /**
- * Splits a tax-inclusive USD amount into PayPhone cents.
- * The whole charge is treated as 15% IVA inclusive. Shipping is not split
- * out: the payment session only carries the total.
+ * Builds the PayPhone split from Medusa's cart totals.
+ * amountWithTax is the remainder so the cents identity holds exactly.
  */
-export function splitInclusiveIva(amount: BigNumberInput): PayphoneAmountSplit {
-  const amountCents = toUsdCents(amount)
+export function splitFromCartTotals(totals: CartChargeTotals): PayphoneAmountSplit {
+  const amount = toUsdCents(totals.total)
+  const tax = toUsdCents(totals.taxTotal)
+  const amountWithoutTax = toUsdCents(totals.untaxedTotal ?? 0)
 
-  if (amountCents < 0) {
+  if (amount < 0 || tax < 0 || amountWithoutTax < 0) {
     throw new MedusaError(MedusaError.Types.INVALID_DATA, "Monto inválido")
   }
 
-  const tax = Math.round((amountCents * IVA_NUMERATOR) / IVA_DENOMINATOR)
-  const amountWithTax = amountCents - tax
-  const split: PayphoneAmountSplit = {
-    amount: amountCents,
-    amountWithoutTax: 0,
-    amountWithTax,
-    tax,
-    service: 0,
-    tip: 0,
-  }
-  const sum =
-    split.amountWithoutTax +
-    split.amountWithTax +
-    split.tax +
-    split.service +
-    split.tip
+  const amountWithTax = amount - amountWithoutTax - tax
 
-  if (sum !== split.amount) {
+  if (amountWithTax < 0) {
     throw new MedusaError(
       MedusaError.Types.UNEXPECTED_STATE,
       "El desglose de IVA no cuadra con el total"
     )
   }
 
-  return split
+  return {
+    amount,
+    amountWithoutTax,
+    amountWithTax,
+    tax,
+    service: 0,
+    tip: 0,
+  }
+}
+
+/**
+ * Shipping Medusa left untaxed. A taxed shipping line stays inside
+ * amountWithTax / tax, which are derived from the stored totals.
+ */
+export function untaxedMajorFromCart(cart: {
+  shipping_total?: BigNumberInput | null
+  shipping_tax_total?: BigNumberInput | null
+}): BigNumberInput {
+  if (toUsdCents(cart.shipping_tax_total ?? 0) === 0) {
+    return cart.shipping_total ?? 0
+  }
+
+  return 0
+}
+
+export function splitSumsToAmount(split: PayphoneAmountSplit): boolean {
+  return (
+    split.amountWithoutTax +
+      split.amountWithTax +
+      split.tax +
+      split.service +
+      split.tip ===
+    split.amount
+  )
+}
+
+function roundHalfAwayFromZero(decimal: string): number {
+  const trimmed = decimal.trim()
+  const negative = trimmed.startsWith("-")
+  const unsigned = negative ? trimmed.slice(1) : trimmed
+  const [wholeRaw, fraction = ""] = unsigned.split(".")
+  const whole = wholeRaw === "" ? "0" : wholeRaw
+
+  if (!/^\d+$/.test(whole) || (fraction !== "" && !/^\d+$/.test(fraction))) {
+    throw new MedusaError(MedusaError.Types.INVALID_DATA, "Monto inválido")
+  }
+
+  let cents = BigInt(whole)
+  const halfDigit = fraction[0] ?? "0"
+
+  if (halfDigit >= "5") {
+    cents += 1n
+  }
+
+  if (negative && cents !== 0n) {
+    cents = -cents
+  }
+
+  if (cents > BigInt(Number.MAX_SAFE_INTEGER) || cents < BigInt(Number.MIN_SAFE_INTEGER)) {
+    throw new MedusaError(MedusaError.Types.INVALID_DATA, "Monto inválido")
+  }
+
+  return Number(cents)
 }

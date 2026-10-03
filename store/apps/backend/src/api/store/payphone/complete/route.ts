@@ -1,13 +1,17 @@
 import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 import { planPayphoneCompletion } from "../../../../modules/payphone/completion"
-import { classifyPayphoneMessage } from "../../../../modules/payphone/service"
+import {
+  classifyPayphoneMessage,
+  PAYPHONE_SHOPPER_COPY,
+} from "../../../../modules/payphone/service"
 import { completePayphoneCartWorkflow } from "../../../../workflows/complete-payphone-cart"
 import { PostPayphoneCompleteSchema } from "../../../middlewares"
 
 type CompleteBody = {
   id: number | string
   client_transaction_id: string
+  cart_id?: string
 }
 
 type PaymentSessionRecord = {
@@ -19,18 +23,10 @@ type PaymentSessionRecord = {
   payment_collection_id?: string | null
 }
 
-const SHOPPER_COPY = {
-  declined: "PayPhone rechazó el pago. No se creó el pedido.",
-  cancelled: "Cancelaste el pago en PayPhone. No se creó el pedido.",
-  mismatch:
-    "El monto que confirmó PayPhone no coincide con tu pedido. No se creó el pedido.",
-  pending: "El pago en PayPhone todavía no está aprobado. No se creó el pedido.",
-  failed: "No pudimos confirmar el pago con PayPhone. No se creó el pedido.",
-} as const
-
 /**
  * Confirms a PayPhone return server-side and completes the cart once.
  * A second call for a cart that already has an order returns that order.
+ * A second in-flight confirm loses on the unique claim row.
  */
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const body = (req.validatedBody ?? req.body) as CompleteBody
@@ -87,16 +83,27 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
+  const initiatedAmountCents = plan.data.amount_cents
+  if (
+    typeof initiatedAmountCents !== "number" ||
+    !Number.isSafeInteger(initiatedAmountCents)
+  ) {
+    declined(res, "failed")
+    return
+  }
+
   const { errors, result, transaction } = await completePayphoneCartWorkflow(
     req.scope
   ).run({
     input: {
       cart_id: plan.cartId,
+      request_cart_id: parsed.data.cart_id,
       session_id: plan.sessionId,
       amount: plan.amount,
       currency_code: plan.currencyCode,
       data: plan.data,
       payphone_transaction_id: plan.payphoneTransactionId,
+      initiated_amount_cents: initiatedAmountCents,
     },
     throwOnError: false,
   })
@@ -104,7 +111,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   if (!transaction.hasFinished()) {
     res.status(409).json({
       code: "failed",
-      message: SHOPPER_COPY.failed,
+      message: PAYPHONE_SHOPPER_COPY.failed,
     })
     return
   }
@@ -112,9 +119,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const failure = errors?.[0]?.error as { message?: string } | undefined
   if (failure) {
     const code = classifyPayphoneMessage(failure.message)
-    res.status(400).json({
+    const status = code === "in_progress" ? 409 : 400
+    res.status(status).json({
       code,
-      message: SHOPPER_COPY[code],
+      message: shopperMessage(code, failure.message),
     })
     return
   }
@@ -146,12 +154,23 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
 function declined(
   res: MedusaResponse,
-  code: keyof typeof SHOPPER_COPY
+  code: keyof typeof PAYPHONE_SHOPPER_COPY
 ) {
   res.status(400).json({
     code,
-    message: SHOPPER_COPY[code],
+    message: PAYPHONE_SHOPPER_COPY[code],
   })
+}
+
+function shopperMessage(
+  code: keyof typeof PAYPHONE_SHOPPER_COPY,
+  raw: string | undefined
+) {
+  if (raw?.includes("Payphone Business")) {
+    return "No pudimos crear el pedido y el reverso en PayPhone falló. Revierte la transacción en Payphone Business."
+  }
+
+  return PAYPHONE_SHOPPER_COPY[code]
 }
 
 async function findOrderId(

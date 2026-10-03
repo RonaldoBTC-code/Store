@@ -20,6 +20,7 @@ import type {
   UpdatePaymentInput,
   UpdatePaymentOutput,
   WebhookActionResult,
+  BigNumberInput,
 } from "@medusajs/framework/types"
 import {
   AbstractPaymentProvider,
@@ -28,7 +29,12 @@ import {
   PaymentActions,
   PaymentSessionStatus,
 } from "@medusajs/framework/utils"
-import { centsToUsd, splitInclusiveIva, toUsdCents } from "./amounts"
+import {
+  centsToUsd,
+  splitFromCartTotals,
+  toUsdCents,
+  type PayphoneAmountSplit,
+} from "./amounts"
 import {
   assertPayphonePaymentUrl,
   PayphoneApiError,
@@ -46,7 +52,51 @@ export const PayphoneResultCode = {
   mismatch: "PAYPHONE_MISMATCH",
   pending: "PAYPHONE_PENDING",
   failed: "PAYPHONE_FAILED",
+  amount: "PAYPHONE_AMOUNT",
+  currency: "PAYPHONE_CURRENCY",
+  client: "PAYPHONE_CLIENT",
+  cartChanged: "PAYPHONE_CART_CHANGED",
+  inProgress: "PAYPHONE_IN_PROGRESS",
 } as const
+
+export const PAYPHONE_SHOPPER_COPY = {
+  declined: "PayPhone rechazó el pago. No se creó el pedido.",
+  cancelled: "Cancelaste el pago en PayPhone. No se creó el pedido.",
+  mismatch:
+    "El monto que confirmó PayPhone no coincide con tu pedido. No se creó el pedido.",
+  pending: "El pago en PayPhone todavía no está aprobado. No se creó el pedido.",
+  failed: "No pudimos confirmar el pago con PayPhone. No se creó el pedido.",
+  amount:
+    "El monto que confirmó PayPhone no coincide con tu pedido. No se creó el pedido.",
+  currency: "La moneda del pago no es USD. No se creó el pedido.",
+  client: "Esta transacción no corresponde a tu pedido. No se creó el pedido.",
+  cart_changed:
+    "Tu pedido cambió después de iniciar el pago. No se creó el pedido.",
+  in_progress:
+    "Este pago ya se está procesando. Espera un momento y no vuelvas a confirmar.",
+} as const
+
+export type PayphoneShopperCode = keyof typeof PAYPHONE_SHOPPER_COPY
+
+const SHOPPER_RESULT_CODE: Record<PayphoneShopperCode, string> = {
+  declined: PayphoneResultCode.declined,
+  cancelled: PayphoneResultCode.cancelled,
+  mismatch: PayphoneResultCode.mismatch,
+  pending: PayphoneResultCode.pending,
+  failed: PayphoneResultCode.failed,
+  amount: PayphoneResultCode.amount,
+  currency: PayphoneResultCode.currency,
+  client: PayphoneResultCode.client,
+  cart_changed: PayphoneResultCode.cartChanged,
+  in_progress: PayphoneResultCode.inProgress,
+}
+
+export function payphoneShopperError(code: PayphoneShopperCode) {
+  return new MedusaError(
+    MedusaError.Types.PAYMENT_AUTHORIZATION_ERROR,
+    `${SHOPPER_RESULT_CODE[code]}:${PAYPHONE_SHOPPER_COPY[code]}`
+  )
+}
 
 export type PayphoneProviderOptions = {
   token?: string
@@ -108,7 +158,7 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
       )
     }
 
-    const split = splitInclusiveIva(input.amount)
+    const split = splitForCharge(input.amount, input.data)
     if (split.amount <= 0) {
       throw new MedusaError(
         MedusaError.Types.INVALID_DATA,
@@ -136,6 +186,8 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
           paymentId: prepared.paymentId,
           payWithCard: prepared.payWithCard,
           payWithPayPhone: prepared.payWithPayPhone,
+          cartTaxTotal: input.data?.cart_tax_total,
+          cartUntaxedTotal: input.data?.cart_untaxed_total ?? 0,
         }),
       }
     } catch (error) {
@@ -150,12 +202,33 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
     const sessionId = readSessionId(current, input.context?.idempotency_key)
     assertClientTransactionId(sessionId)
 
-    const split = splitInclusiveIva(input.amount)
     const previousCents = readNumber(current.amount_cents)
     const payphoneTransactionId = readOptionalId(current.payphone_transaction_id)
     const payWithCard = readString(current.pay_with_card)
     const payWithPayPhone = readString(current.pay_with_payphone)
     const urlsAreTrusted = trustedPayphoneUrls(payWithCard, payWithPayPhone)
+    const inputCents = toUsdCents(input.amount)
+
+    if (
+      previousCents != null &&
+      previousCents === inputCents &&
+      payphoneTransactionId &&
+      urlsAreTrusted &&
+      isServerConfirmed(current, sessionId, payphoneTransactionId, previousCents)
+    ) {
+      return {
+        status: PaymentSessionStatus.PENDING,
+        data: {
+          ...current,
+          ...confirmedSnapshot(current),
+          client_transaction_id: sessionId,
+          amount_cents: previousCents,
+          payphone_transaction_id: payphoneTransactionId,
+        },
+      }
+    }
+
+    const split = splitForCharge(input.amount, current)
     const unchanged = previousCents === split.amount && urlsAreTrusted
 
     if (unchanged && payWithCard && payWithPayPhone) {
@@ -165,6 +238,8 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
         paymentId: readString(current.payment_id) ?? "",
         payWithCard,
         payWithPayPhone,
+        cartTaxTotal: current.cart_tax_total,
+        cartUntaxedTotal: current.cart_untaxed_total ?? 0,
       })
 
       if (
@@ -215,6 +290,8 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
           paymentId: prepared.paymentId,
           payWithCard: prepared.payWithCard,
           payWithPayPhone: prepared.payWithPayPhone,
+          cartTaxTotal: current.cart_tax_total,
+          cartUntaxedTotal: current.cart_untaxed_total ?? 0,
         }),
       }
     } catch (error) {
@@ -423,7 +500,7 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
       transaction = await this.client_.confirm(transactionId, clientTransactionId)
     } catch (error) {
       this.logger_?.error?.(
-        `PayPhone webhook confirm failed: ${error instanceof Error ? error.message : "unknown"}`
+        `PayPhone webhook confirm failed: ${safeLogDetail(error)}`
       )
       return { action: PaymentActions.FAILED }
     }
@@ -451,20 +528,13 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
       return
     }
 
-    if (!this.options_.token || !this.options_.storeId) {
-      this.logger_?.error?.(
-        "PayPhone provider is missing PAYPHONE_TOKEN or PAYPHONE_STORE_ID."
-      )
-      throw new MedusaError(
-        MedusaError.Types.INVALID_DATA,
-        "No pudimos iniciar el pago con PayPhone."
-      )
-    }
-
-    if (!this.options_.responseUrl || !this.options_.cancellationUrl) {
-      this.logger_?.error?.(
-        "PayPhone provider is missing PAYPHONE_RESPONSE_URL or PAYPHONE_CANCELLATION_URL."
-      )
+    if (
+      !this.options_.token ||
+      !this.options_.storeId ||
+      !this.options_.responseUrl ||
+      !this.options_.cancellationUrl
+    ) {
+      this.logger_?.error?.("PayPhone provider is not configured.")
       throw new MedusaError(
         MedusaError.Types.INVALID_DATA,
         "No pudimos iniciar el pago con PayPhone."
@@ -484,9 +554,7 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
       await this.client_.reverse(transaction.transactionId)
     } catch (error) {
       this.logger_?.error?.(
-        `PayPhone amount mismatch reverse failed for ${transaction.transactionId}: ${
-          error instanceof Error ? error.message : "unknown"
-        }`
+        `PayPhone amount mismatch reverse failed for ${transaction.transactionId}: ${safeLogDetail(error)}`
       )
       throw new MedusaError(
         MedusaError.Types.UNEXPECTED_STATE,
@@ -523,8 +591,7 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
       return error
     }
 
-    const detail = error instanceof Error ? error.message : "error desconocido"
-    this.logger_?.error?.(`PayPhone request failed: ${detail}`)
+    this.logger_?.error?.(`PayPhone request failed: ${safeLogDetail(error)}`)
 
     const code =
       error instanceof PayphoneApiError ? PayphoneResultCode.failed : PayphoneResultCode.failed
@@ -535,10 +602,12 @@ class PayphoneProviderService extends AbstractPaymentProvider<PayphoneProviderOp
 
 function sessionData(input: {
   sessionId: string
-  split: ReturnType<typeof splitInclusiveIva>
+  split: PayphoneAmountSplit
   paymentId: string
   payWithCard: string
   payWithPayPhone: string
+  cartTaxTotal: unknown
+  cartUntaxedTotal: unknown
 }): SessionData {
   return {
     id: input.sessionId,
@@ -553,6 +622,8 @@ function sessionData(input: {
     tax_cents: input.split.tax,
     service_cents: input.split.service,
     tip_cents: input.split.tip,
+    cart_tax_total: input.cartTaxTotal,
+    cart_untaxed_total: input.cartUntaxedTotal,
     currency_code: "usd",
     payphone_confirmed: false,
     transaction_status: "Pending",
@@ -588,6 +659,15 @@ function confirmedSnapshot(data: SessionData): SessionData {
   }
 }
 
+export function buildConfirmedSessionData(
+  previous: SessionData,
+  transaction: PayphoneTransaction,
+  sessionId: string,
+  expectedCents: number
+): SessionData {
+  return confirmedData(previous, transaction, sessionId, expectedCents)
+}
+
 function confirmedData(
   previous: SessionData,
   transaction: PayphoneTransaction,
@@ -605,6 +685,8 @@ function confirmedData(
     amount_with_tax_cents: previous.amount_with_tax_cents,
     amount_without_tax_cents: previous.amount_without_tax_cents,
     tax_cents: previous.tax_cents,
+    cart_tax_total: previous.cart_tax_total,
+    cart_untaxed_total: previous.cart_untaxed_total,
     currency_code: "usd",
     payphone_confirmed: true,
     payphone_transaction_id: transaction.transactionId,
@@ -645,14 +727,14 @@ function shopperMessage(
   outcome: "approved" | "cancelled" | "declined" | "pending"
 ) {
   if (outcome === "cancelled") {
-    return "Cancelaste el pago en PayPhone. No se creó el pedido."
+    return PAYPHONE_SHOPPER_COPY.cancelled
   }
 
   if (outcome === "pending") {
-    return "El pago en PayPhone todavía no está aprobado. No se creó el pedido."
+    return PAYPHONE_SHOPPER_COPY.pending
   }
 
-  return "PayPhone rechazó el pago. No se creó el pedido."
+  return PAYPHONE_SHOPPER_COPY.declined
 }
 
 function codedError(code: string, message: string) {
@@ -664,7 +746,7 @@ function codedError(code: string, message: string) {
 
 export function classifyPayphoneMessage(
   message: string | undefined
-): "declined" | "cancelled" | "mismatch" | "pending" | "failed" {
+): PayphoneShopperCode {
   if (!message) {
     return "failed"
   }
@@ -677,6 +759,26 @@ export function classifyPayphoneMessage(
     return "cancelled"
   }
 
+  if (message.includes(PayphoneResultCode.amount)) {
+    return "amount"
+  }
+
+  if (message.includes(PayphoneResultCode.currency)) {
+    return "currency"
+  }
+
+  if (message.includes(PayphoneResultCode.client)) {
+    return "client"
+  }
+
+  if (message.includes(PayphoneResultCode.cartChanged)) {
+    return "cart_changed"
+  }
+
+  if (message.includes(PayphoneResultCode.inProgress)) {
+    return "in_progress"
+  }
+
   if (message.includes(PayphoneResultCode.mismatch)) {
     return "mismatch"
   }
@@ -686,6 +788,24 @@ export function classifyPayphoneMessage(
   }
 
   return "failed"
+}
+
+function splitForCharge(
+  amount: BigNumberInput,
+  data: Record<string, unknown> | undefined
+): PayphoneAmountSplit {
+  if (data?.cart_tax_total == null || data.cart_tax_total === "") {
+    throw new MedusaError(
+      MedusaError.Types.INVALID_DATA,
+      "No pudimos calcular el IVA del pedido."
+    )
+  }
+
+  return splitFromCartTotals({
+    total: amount,
+    taxTotal: data.cart_tax_total as BigNumberInput,
+    untaxedTotal: (data.cart_untaxed_total ?? 0) as BigNumberInput,
+  })
 }
 
 function readSessionId(
@@ -745,6 +865,15 @@ function trustedPayphoneUrls(
   } catch {
     return false
   }
+}
+
+function safeLogDetail(error: unknown) {
+  const message = error instanceof Error ? error.message : "unknown"
+  if (/bearer\s+\S+/i.test(message) || message.includes("PAYPHONE_TOKEN")) {
+    return "unknown"
+  }
+
+  return message
 }
 
 function readWebhookBody(data: unknown): Record<string, unknown> {

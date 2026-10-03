@@ -86,6 +86,16 @@ export const payphoneStatusMessage = (code: string | null | undefined) => {
       return "El pago en PayPhone todavía no está aprobado. No se creó el pedido."
     case "failed":
       return "No pudimos confirmar el pago con PayPhone. No se creó el pedido."
+    case "amount":
+      return "El monto que confirmó PayPhone no coincide con tu pedido. No se creó el pedido."
+    case "currency":
+      return "La moneda del pago no es USD. No se creó el pedido."
+    case "client":
+      return "Esta transacción no corresponde a tu pedido. No se creó el pedido."
+    case "cart_changed":
+      return "Tu pedido cambió después de iniciar el pago. No se creó el pedido."
+    case "in_progress":
+      return "Este pago ya se está procesando. Espera un momento y no vuelvas a confirmar."
     default:
       return null
   }

@@ -1,5 +1,5 @@
 import { sdk } from "@lib/config"
-import { getAuthHeaders, removeCartId } from "@lib/data/cookies"
+import { getAuthHeaders, getCartId, removeCartId } from "@lib/data/cookies"
 import { unstable_rethrow } from "next/navigation"
 import { NextRequest, NextResponse } from "next/server"
 
@@ -9,6 +9,11 @@ const STATUS_CODES = new Set([
   "mismatch",
   "pending",
   "failed",
+  "amount",
+  "currency",
+  "client",
+  "cart_changed",
+  "in_progress",
 ])
 
 /**
@@ -32,6 +37,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const cartId = await getCartId()
     const result = await sdk.client.fetch<{
       order_id?: string
       country_code?: string
@@ -41,6 +47,7 @@ export async function GET(req: NextRequest) {
       body: {
         id: Number(payphoneId),
         client_transaction_id: clientTransactionId,
+        ...(cartId ? { cart_id: cartId } : {}),
       },
       headers: {
         ...(await getAuthHeaders()),
@@ -73,12 +80,35 @@ function safeCountry(value: string | null | undefined) {
 }
 
 function readErrorCode(error: unknown) {
+  if (typeof error === "object" && error && "code" in error) {
+    const code = String((error as { code?: unknown }).code ?? "")
+    if (STATUS_CODES.has(code)) {
+      return code
+    }
+  }
+
   const message =
     error instanceof Error
       ? error.message
       : typeof error === "object" && error && "message" in error
         ? String((error as { message?: unknown }).message ?? "")
         : ""
+
+  if (message.toLowerCase().includes("ya se está procesando")) {
+    return "in_progress"
+  }
+
+  if (message.toLowerCase().includes("no es usd")) {
+    return "currency"
+  }
+
+  if (message.toLowerCase().includes("no corresponde")) {
+    return "client"
+  }
+
+  if (message.toLowerCase().includes("cambió") || message.toLowerCase().includes("cambio")) {
+    return "cart_changed"
+  }
 
   if (message.toLowerCase().includes("cancel")) {
     return "cancelled"

@@ -36,5 +36,8 @@ module.exports = defineConfig({
         ],
       },
     },
+    {
+      resolve: "./src/modules/payphone-claim",
+    },
   ],
 })

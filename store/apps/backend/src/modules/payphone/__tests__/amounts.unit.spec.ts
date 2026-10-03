@@ -1,9 +1,96 @@
-import { splitInclusiveIva, toUsdCents } from "../amounts"
+import { splitFromCartTotals, splitSumsToAmount, toUsdCents } from "../amounts"
 import { payphoneReverseAllowed } from "../reverse-window"
 
-describe("PayPhone IVA split", () => {
-  it("matches PayPhone's documented $1.15 example", () => {
-    expect(splitInclusiveIva(1.15)).toEqual({
+describe("PayPhone cents from Medusa totals", () => {
+  it("converts $34.99 and a stored tax total without recomputing IVA", () => {
+    expect(toUsdCents(34.99)).toBe(3499)
+    expect(toUsdCents("34.99")).toBe(3499)
+
+    const split = splitFromCartTotals({
+      total: "34.99",
+      taxTotal: "4.56",
+      untaxedTotal: 0,
+    })
+
+    expect(split).toEqual({
+      amount: 3499,
+      amountWithoutTax: 0,
+      amountWithTax: 3043,
+      tax: 456,
+      service: 0,
+      tip: 0,
+    })
+    expect(splitSumsToAmount(split)).toBe(true)
+  })
+
+  it("uses Medusa tax and untaxed shipping for several caps", () => {
+    // 7.83 is the tax Medusa stored. This function does not apply 15%.
+    const split = splitFromCartTotals({
+      total: "65.00",
+      taxTotal: "7.83",
+      untaxedTotal: "5.00",
+    })
+
+    expect(split).toEqual({
+      amount: 6500,
+      amountWithoutTax: 500,
+      amountWithTax: 5217,
+      tax: 783,
+      service: 0,
+      tip: 0,
+    })
+    expect(splitSumsToAmount(split)).toBe(true)
+  })
+
+  it("keeps a discounted total's stored tax", () => {
+    const split = splitFromCartTotals({
+      total: "28.40",
+      taxTotal: "3.70",
+    })
+
+    expect(split).toEqual({
+      amount: 2840,
+      amountWithoutTax: 0,
+      amountWithTax: 2470,
+      tax: 370,
+      service: 0,
+      tip: 0,
+    })
+    expect(splitSumsToAmount(split)).toBe(true)
+  })
+
+  it("rounds half a cent away from zero and still sums exactly", () => {
+    expect(toUsdCents("1.005")).toBe(101)
+    expect(toUsdCents("10.005")).toBe(1001)
+
+    const split = splitFromCartTotals({
+      total: "10.005",
+      taxTotal: "1.005",
+      untaxedTotal: "2.005",
+    })
+
+    expect(split).toEqual({
+      amount: 1001,
+      amountWithoutTax: 201,
+      amountWithTax: 699,
+      tax: 101,
+      service: 0,
+      tip: 0,
+    })
+    expect(
+      split.amountWithTax + split.amountWithoutTax + split.tax
+    ).toBe(split.amount)
+    expect(splitSumsToAmount(split)).toBe(true)
+  })
+
+  it("matches PayPhone's $1.15 example when those totals are already stored", () => {
+    const split = splitFromCartTotals({
+      total: "1.15",
+      taxTotal: "0.15",
+      untaxedTotal: 0,
+    })
+
+    expect(split).toEqual({
       amount: 115,
       amountWithoutTax: 0,
       amountWithTax: 100,
@@ -11,66 +98,7 @@ describe("PayPhone IVA split", () => {
       service: 0,
       tip: 0,
     })
-  })
-
-  it("splits a tax-inclusive total so the cents sum exactly", () => {
-    const split = splitInclusiveIva(11.5)
-
-    expect(split).toEqual({
-      amount: 1150,
-      amountWithoutTax: 0,
-      amountWithTax: 1000,
-      tax: 150,
-      service: 0,
-      tip: 0,
-    })
-    expect(
-      split.amountWithoutTax +
-        split.amountWithTax +
-        split.tax +
-        split.service +
-        split.tip
-    ).toBe(split.amount)
-  })
-
-  it.each([
-    [0.01, 1],
-    [1, 100],
-    [10, 1000],
-    [10.1, 1010],
-    [12.68, 1268],
-    [19.99, 1999],
-    [33.33, 3333],
-  ])("rounds %s USD to %s cents and keeps the identity", (major, cents) => {
-    expect(toUsdCents(major)).toBe(cents)
-
-    const split = splitInclusiveIva(major)
-    expect(split.amount).toBe(cents)
-    expect(
-      split.amountWithoutTax +
-        split.amountWithTax +
-        split.tax +
-        split.service +
-        split.tip
-    ).toBe(cents)
-  })
-
-  it("keeps the identity for every cent amount up to $500", () => {
-    for (let cents = 0; cents <= 50000; cents += 1) {
-      const split = splitInclusiveIva(cents / 100)
-      const sum =
-        split.amountWithoutTax +
-        split.amountWithTax +
-        split.tax +
-        split.service +
-        split.tip
-
-      expect(sum).toBe(cents)
-      expect(split.amount).toBe(cents)
-      expect(split.amountWithoutTax).toBe(0)
-      expect(split.service).toBe(0)
-      expect(split.tip).toBe(0)
-    }
+    expect(splitSumsToAmount(split)).toBe(true)
   })
 
   it("reads BigNumber-shaped input", () => {
@@ -78,7 +106,15 @@ describe("PayPhone IVA split", () => {
   })
 
   it("rejects a negative amount", () => {
-    expect(() => splitInclusiveIva(-1)).toThrow("Monto inválido")
+    expect(() =>
+      splitFromCartTotals({ total: -1, taxTotal: 0, untaxedTotal: 0 })
+    ).toThrow("Monto inválido")
+  })
+
+  it("rejects a tax breakdown that exceeds the total", () => {
+    expect(() =>
+      splitFromCartTotals({ total: "10.00", taxTotal: "8.00", untaxedTotal: "5.00" })
+    ).toThrow("El desglose de IVA no cuadra con el total")
   })
 })
 

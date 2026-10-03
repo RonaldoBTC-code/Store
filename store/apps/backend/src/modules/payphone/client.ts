@@ -1,4 +1,4 @@
-import { splitInclusiveIva, type PayphoneAmountSplit } from "./amounts"
+import type { PayphoneAmountSplit } from "./amounts"
 
 /**
  * Official Botón de Pago hosts. Do not point these at a guessed URL.
@@ -208,10 +208,6 @@ export function assertPayphonePaymentUrl(url: string) {
       502
     )
   }
-}
-
-export function buildPrepareSplit(amount: Parameters<typeof splitInclusiveIva>[0]) {
-  return splitInclusiveIva(amount)
 }
 
 function parseBody(text: string): unknown {

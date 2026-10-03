@@ -93,6 +93,8 @@ describe("PayphoneProviderService", () => {
       transaction_status: "Approved",
       transaction_id: 1,
       amount_cents: 1,
+      cart_tax_total: 1.5,
+      cart_untaxed_total: 0,
     }
     const result = await service.initiatePayment({
       amount: 11.5,
@@ -152,7 +154,11 @@ describe("PayphoneProviderService", () => {
       service.initiatePayment({
         amount: 11.5,
         currency_code: "usd",
-        data: { session_id: SESSION },
+        data: {
+          session_id: SESSION,
+          cart_tax_total: 1.5,
+          cart_untaxed_total: 0,
+        },
         context: { idempotency_key: SESSION },
       })
     ).rejects.toThrow("No pudimos iniciar el pago con PayPhone.")
@@ -285,6 +291,8 @@ describe("PayphoneProviderService", () => {
         transaction_status: "Approved",
         transaction_id: 23178284,
         amount_cents: 1150,
+        cart_tax_total: 1.5,
+        cart_untaxed_total: 0,
       },
       context: { idempotency_key: SESSION },
     })
@@ -395,5 +403,26 @@ describe("PayphoneProviderService", () => {
     expect(result.action).toBe(PaymentActions.NOT_SUPPORTED)
     expect(result.data?.session_id).toBeUndefined()
     expect(confirmCalls).toHaveLength(0)
+  })
+
+  it("does not put the token in configuration errors or logs", async () => {
+    const error = jest.fn()
+    const service = new PayphoneProviderService(
+      { logger: { error } as never },
+      { token: "super-secret-token", storeId: "store-1" }
+    )
+
+    await expect(
+      service.initiatePayment({
+        amount: 11.5,
+        currency_code: "usd",
+        data: { cart_tax_total: 1.5, cart_untaxed_total: 0 },
+        context: { idempotency_key: SESSION },
+      })
+    ).rejects.toThrow("No pudimos iniciar el pago con PayPhone.")
+
+    const logged = JSON.stringify(error.mock.calls)
+    expect(logged).not.toContain("super-secret-token")
+    expect(logged).not.toContain("PAYPHONE_TOKEN")
   })
 })
