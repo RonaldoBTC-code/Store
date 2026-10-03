@@ -136,12 +136,12 @@ const RAZON_SOCIAL_ONLY_RUC =
   "La razón social solo se usa al facturar con RUC."
 const RAZON_SOCIAL_SPACES =
   "La razón social no puede empezar ni terminar con espacios."
-const RAZON_SOCIAL_LENGTH = "La razón social no puede pasar de 300 caracteres."
+const RAZON_SOCIAL_LENGTH =
+  "La razón social puede tener hasta 300 caracteres"
 const RAZON_SOCIAL_CONTROL =
-  "La razón social tiene caracteres que no se pueden usar."
-const RAZON_SOCIAL_DIGITS = "La razón social no puede ser solo números."
-const RAZON_SOCIAL_CONTAINS_RUC =
-  "La razón social no puede incluir el número de RUC."
+  "La razón social tiene caracteres no válidos. Escríbela de nuevo sin copiar y pegar"
+const RAZON_SOCIAL_NUMBER =
+  "Escribe el nombre de la empresa o persona, sin el número de RUC ni de cédula"
 const RAZON_SOCIAL_MAX_LENGTH = 300
 
 function invoiceKeysPresent(metadata: unknown): boolean {
@@ -224,17 +224,41 @@ export function razonSocialRejection(
     return RAZON_SOCIAL_LENGTH
   }
 
-  if (/\p{Cc}/u.test(value)) {
+  if (/\p{Cc}|\p{Cf}/u.test(value)) {
     return RAZON_SOCIAL_CONTROL
   }
 
   const digits = value.replace(/\D/g, "")
-  if (value.includes(taxId) || digits.includes(taxId)) {
-    return RAZON_SOCIAL_CONTAINS_RUC
+  const cedulaPart = taxId.slice(0, 10)
+  if (
+    (taxId.length > 0 &&
+      (value.includes(taxId) || digits.includes(taxId))) ||
+    (cedulaPart.length === 10 && digits.includes(cedulaPart))
+  ) {
+    return RAZON_SOCIAL_NUMBER
   }
 
   if (/^\d+$/.test(value)) {
-    return RAZON_SOCIAL_DIGITS
+    return RAZON_SOCIAL_NUMBER
+  }
+
+  return null
+}
+
+/**
+ * An update that does not send invoice metadata must not set a legal name.
+ * `company=""` is how checkout can clear the column, including PR #13.
+ * Whitespace-only is empty after trim and is allowed through unchanged.
+ */
+function companyWithoutInvoiceMetadataRejection(
+  company: unknown
+): string | null {
+  if (company == null) {
+    return null
+  }
+
+  if (typeof company !== "string" || company.trim() !== "") {
+    return RAZON_SOCIAL_ONLY_RUC
   }
 
   return null
@@ -318,9 +342,12 @@ export function cartUpdateRejection(body: unknown): string | null {
     return phone
   }
 
-  // Omitting metadata leaves the stored invoice id and legal name in place.
+  // Omitting metadata leaves the stored invoice id in place. A non-empty
+  // company on that update is rejected so the number cannot be written into
+  // a column the response sanitizer does not filter. An empty company is
+  // allowed and is not rewritten.
   if (!Object.prototype.hasOwnProperty.call(billing, "metadata")) {
-    return null
+    return companyWithoutInvoiceMetadataRejection(billing.company)
   }
 
   const metadataMessage = invoiceMetadataRejection(billing.metadata)

@@ -12,18 +12,22 @@ export type AbandonedCartRecord = {
   updated_at?: string | Date | null
   billing_address?: {
     id?: string
+    company?: string | null
     metadata?: Record<string, unknown> | null
   } | null
 }
 
-export type InvoiceIdRemoval = {
-  billing_address: {
-    id?: string
-    company: ""
-    metadata: {
-      tax_id: ""
-      tax_id_type: ""
-    }
+/**
+ * Written with the cart module's address update, not a nested cart update.
+ * A nested `billing_address` on `updateCarts` leaves the old metadata in place.
+ * `""` is the metadata delete marker, and the address id updates that same row.
+ */
+export type InvoiceAddressClearance = {
+  id: string
+  company: ""
+  metadata: {
+    tax_id: ""
+    tax_id_type: ""
   }
 }
 
@@ -32,7 +36,7 @@ type CartPort = {
     filters: AbandonedCartFilters,
     config: { take: number; skip: number; relations: string[] }
   ) => Promise<AbandonedCartRecord[]>
-  updateCarts: (id: string, data: InvoiceIdRemoval) => Promise<unknown>
+  updateAddresses: (data: InvoiceAddressClearance) => Promise<unknown>
   log: (message: string) => void
   now?: Date
 }
@@ -64,6 +68,11 @@ export function cartStillHoldsInvoiceId(
     return false
   }
 
+  const company = cart.billing_address?.company
+  if (typeof company === "string" && company !== "") {
+    return true
+  }
+
   const metadata = cart.billing_address?.metadata
   if (!metadata) {
     return false
@@ -76,11 +85,13 @@ export function cartStillHoldsInvoiceId(
 }
 
 /**
- * Drops invoice ids from abandoned carts through the cart module.
- * Empty strings are Medusa's metadata delete marker. The same update sets
- * billing_address.company to "" so a RUC legal name does not stay on the cart.
- * Orders are never loaded. A cart with no invoice keys is skipped, so a second
- * run updates nothing. Logs only the count.
+ * Drops invoice ids from abandoned carts through the cart module's address
+ * update. Empty strings are Medusa's metadata delete marker. The address id
+ * is required so the same row is updated. `company` is set to "".
+ * Carts whose billing company is non-empty are cleaned even when they have
+ * no invoice metadata. Orders are never loaded. A cart with neither an
+ * invoice key nor a company is skipped, so a second run updates nothing.
+ * Logs only the count.
  */
 export async function purgeAbandonedCartInvoiceIds(
   port: CartPort
@@ -109,21 +120,21 @@ export async function purgeAbandonedCartInvoiceIds(
         continue
       }
 
-      const removal: InvoiceIdRemoval = {
-        billing_address: {
-          company: "",
-          metadata: {
-            tax_id: "",
-            tax_id_type: "",
-          },
+      const addressId = cart.billing_address?.id
+      if (!addressId) {
+        continue
+      }
+
+      const removal: InvoiceAddressClearance = {
+        id: addressId,
+        company: "",
+        metadata: {
+          tax_id: "",
+          tax_id_type: "",
         },
       }
 
-      if (cart.billing_address?.id) {
-        removal.billing_address.id = cart.billing_address.id
-      }
-
-      await port.updateCarts(cart.id, removal)
+      await port.updateAddresses(removal)
       cleanedIds.add(cart.id)
       cleaned += 1
       cleanedThisPage += 1
@@ -138,7 +149,7 @@ export async function purgeAbandonedCartInvoiceIds(
       continue
     }
 
-    // `updateCarts` may refresh `updated_at` and drop the cart from this
+    // An address update may refresh `updated_at` and drop the cart from this
     // filter. The page we just held still contains those ids, so compare a
     // fresh first page. If a cleaned cart disappeared, read from the start.
     // If it is still listed, advance. Otherwise a date bump skips the next

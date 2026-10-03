@@ -4,8 +4,8 @@ import {
   purgeAbandonedCartInvoiceIds,
   type AbandonedCartFilters,
   type AbandonedCartRecord,
-  type InvoiceIdRemoval,
-} from "./purge-abandoned-cart-tax-ids"
+  type InvoiceAddressClearance,
+} from "../utils/purge-abandoned-cart-tax-ids"
 
 /**
  * Daily LOPDP retention: invoice ids stay on orders for SRI invoicing and are
@@ -20,7 +20,7 @@ export default async function purgeAbandonedCartInvoiceIdsJob(
       filters: AbandonedCartFilters,
       config: { take: number; skip: number; relations: string[] }
     ) => Promise<AbandonedCartRecord[]>
-    updateCarts: (id: string, data: InvoiceIdRemoval) => Promise<unknown>
+    updateAddresses: (data: InvoiceAddressClearance) => Promise<unknown>
   }
   const logger = container.resolve("logger") as {
     info: (message: string) => void
@@ -28,7 +28,7 @@ export default async function purgeAbandonedCartInvoiceIdsJob(
 
   await purgeAbandonedCartInvoiceIds({
     listCarts: (filters, config) => cartModule.listCarts(filters, config),
-    updateCarts: (id, data) => cartModule.updateCarts(id, data),
+    updateAddresses: (data) => cartModule.updateAddresses(data),
     log: (message) => logger.info(message),
   })
 }

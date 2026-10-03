@@ -199,23 +199,30 @@ describe("backend tax id rules", () => {
     expect(reject(`${legalName} `, "ruc", ruc)).toBe(
       "La razón social no puede empezar ni terminar con espacios."
     )
+    const numberMessage =
+      "Escribe el nombre de la empresa o persona, sin el número de RUC ni de cédula"
+    const naturalRuc = "1710034065001"
+
     expect(reject("A".repeat(301), "ruc", ruc)).toBe(
-      "La razón social no puede pasar de 300 caracteres."
+      "La razón social puede tener hasta 300 caracteres"
     )
     expect(reject(`Norte\u0001`, "ruc", ruc)).toBe(
-      "La razón social tiene caracteres que no se pueden usar."
+      "La razón social tiene caracteres no válidos. Escríbela de nuevo sin copiar y pegar"
     )
-    expect(reject("123456", "ruc", ruc)).toBe(
-      "La razón social no puede ser solo números."
+    expect(reject("Norte\u202E", "ruc", ruc)).toBe(
+      "La razón social tiene caracteres no válidos. Escríbela de nuevo sin copiar y pegar"
     )
-    expect(reject(ruc, "ruc", ruc)).toBe(
-      "La razón social no puede incluir el número de RUC."
+    expect(reject("Norte\u200B", "ruc", ruc)).toBe(
+      "La razón social tiene caracteres no válidos. Escríbela de nuevo sin copiar y pegar"
     )
-    expect(reject(`Casa ${ruc}`, "ruc", ruc)).toBe(
-      "La razón social no puede incluir el número de RUC."
-    )
+    expect(reject("123456", "ruc", ruc)).toBe(numberMessage)
+    expect(reject(ruc, "ruc", ruc)).toBe(numberMessage)
+    expect(reject(`Casa ${ruc}`, "ruc", ruc)).toBe(numberMessage)
     expect(reject(`Casa ${ruc.slice(0, 3)}-${ruc.slice(3)}`, "ruc", ruc)).toBe(
-      "La razón social no puede incluir el número de RUC."
+      numberMessage
+    )
+    expect(reject(`Juan Pérez ${naturalRuc.slice(0, 10)}`, "ruc", naturalRuc)).toBe(
+      numberMessage
     )
     expect(reject(legalName, "cedula", cedula)).toBe(
       "La razón social solo se usa al facturar con RUC."
@@ -232,6 +239,22 @@ describe("backend tax id rules", () => {
         billing_address: billing(undefined, "ruc", ruc),
       })
     ).toBe("Ingresa la razón social para facturar con RUC")
+
+    const withoutMetadata = (company: unknown) => ({
+      billing_address: {
+        phone: "0991234567",
+        ...(company === undefined ? {} : { company }),
+      },
+    })
+    expect(cartUpdateRejection(withoutMetadata(""))).toBeNull()
+    expect(cartUpdateRejection(withoutMetadata("   "))).toBeNull()
+    expect(cartUpdateRejection(withoutMetadata(undefined))).toBeNull()
+    const bare = withoutMetadata(legalName)
+    const bareBefore = JSON.stringify(bare)
+    const bareMessage = cartUpdateRejection(bare)
+    expect(bareMessage).toBe("La razón social solo se usa al facturar con RUC.")
+    expect(bareMessage).not.toContain(legalName)
+    expect(JSON.stringify(bare)).toBe(bareBefore)
 
     const accepted = {
       billing_address: billing(legalName, "ruc", ruc),

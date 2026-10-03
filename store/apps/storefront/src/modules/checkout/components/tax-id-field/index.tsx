@@ -5,7 +5,10 @@ import {
 } from "@lib/util/ec-tax-id"
 import Input from "@modules/common/components/input"
 import NativeSelect from "@modules/common/components/native-select"
+import { Label } from "@modules/common/components/ui"
 import { useState } from "react"
+
+const RAZON_SOCIAL_ERROR = "Ingresa la razón social para facturar con RUC"
 
 const TAX_ID_LABELS: Record<TaxIdType, string> = {
   cedula: "Cédula",
@@ -28,6 +31,7 @@ const TaxIdField = ({
   )
   const [taxId, setTaxId] = useState("")
   const [company, setCompany] = useState("")
+  const [companyInvalid, setCompanyInvalid] = useState(false)
   const showSaved = taxIdSet && !editing
   const needsNumber = !showSaved && taxIdType !== "consumidor_final"
   const showReentryHint = needsNumber && (editing || requireReentry)
@@ -54,6 +58,7 @@ const TaxIdField = ({
             setEditing(true)
             setTaxId("")
             setCompany("")
+            setCompanyInvalid(false)
             setTaxIdType(
               taxIdKind === "consumidor_final" ? "consumidor_final" : "cedula"
             )
@@ -81,6 +86,7 @@ const TaxIdField = ({
             setTaxIdType(next as TaxIdType)
             setTaxId("")
             setCompany("")
+            setCompanyInvalid(false)
           }
         }}
         required
@@ -134,19 +140,42 @@ const TaxIdField = ({
         </p>
       )}
       {taxIdType === "ruc" ? (
-        <>
-          <Input
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="billing_address.company">
+            Razón social
+            <span className="text-rose-500">*</span>
+          </Label>
+          <input
             id="billing_address.company"
-            label="Razón social"
             name="billing_address.company"
             autoComplete="organization"
             required
             maxLength={300}
-            title="Ingresa la razón social para facturar con RUC"
             value={company}
-            onChange={(event) => setCompany(event.target.value)}
-            aria-describedby="billing-razon-social-help"
+            aria-invalid={companyInvalid}
+            aria-describedby={
+              companyInvalid
+                ? "billing-razon-social-help billing-razon-social-error"
+                : "billing-razon-social-help"
+            }
             data-testid="billing-razon-social-input"
+            className="pt-4 pb-1 block w-full h-11 px-4 mt-0 bg-ui-bg-field border rounded-md appearance-none focus:outline-none focus:ring-0 focus:shadow-borders-interactive-with-active border-ui-border-base hover:bg-ui-bg-field-hover"
+            onChange={(event) => {
+              const next = event.target.value
+              setCompany(next)
+              if (next.trim()) {
+                setCompanyInvalid(false)
+              }
+            }}
+            onBlur={() => {
+              if (!company.trim()) {
+                setCompanyInvalid(true)
+              }
+            }}
+            onInvalid={(event) => {
+              event.preventDefault()
+              setCompanyInvalid(true)
+            }}
           />
           <p
             id="billing-razon-social-help"
@@ -154,7 +183,15 @@ const TaxIdField = ({
           >
             Como aparece en tu RUC
           </p>
-        </>
+          {companyInvalid && (
+            <p
+              id="billing-razon-social-error"
+              data-testid="billing-razon-social-error"
+            >
+              {RAZON_SOCIAL_ERROR}
+            </p>
+          )}
+        </div>
       ) : (
         <input type="hidden" name="billing_address.company" value="" />
       )}

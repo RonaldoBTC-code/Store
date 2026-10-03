@@ -7,8 +7,8 @@ import {
   purgeAbandonedCartInvoiceIds,
   type AbandonedCartFilters,
   type AbandonedCartRecord,
-  type InvoiceIdRemoval,
-} from "../../../../backend/src/jobs/purge-abandoned-cart-tax-ids"
+  type InvoiceAddressClearance,
+} from "../../../../backend/src/utils/purge-abandoned-cart-tax-ids"
 
 const NOW = new Date("2026-10-03T00:00:00.000Z")
 const DAY = 24 * 60 * 60 * 1000
@@ -56,7 +56,7 @@ function matches(cart: Row, filters: AbandonedCartFilters): boolean {
 }
 
 function createPort(rows: Row[], bumpUpdatedAt: boolean) {
-  const updates: { id: string; data: InvoiceIdRemoval }[] = []
+  const updates: InvoiceAddressClearance[] = []
   const logs: string[] = []
   const orders = [
     {
@@ -81,9 +81,9 @@ function createPort(rows: Row[], bumpUpdatedAt: boolean) {
       const matching = rows.filter((cart) => matches(cart, filters))
       return matching.slice(config.skip, config.skip + config.take)
     },
-    async updateCarts(id: string, data: InvoiceIdRemoval) {
-      updates.push({ id, data })
-      const cart = rows.find((entry) => entry.id === id)
+    async updateAddresses(data: InvoiceAddressClearance) {
+      updates.push(data)
+      const cart = rows.find((entry) => entry.billing_address.id === data.id)
       if (!cart) {
         return
       }
@@ -92,7 +92,7 @@ function createPort(rows: Row[], bumpUpdatedAt: boolean) {
       delete metadata.tax_id
       delete metadata.tax_id_type
       cart.billing_address.metadata = metadata
-      cart.billing_address.company = data.billing_address.company
+      cart.billing_address.company = data.company
 
       if (bumpUpdatedAt) {
         cart.updated_at = NOW.toISOString()
@@ -139,6 +139,31 @@ describe("abandoned cart invoice-id retention", () => {
     expect(
       cartStillHoldsInvoiceId(row("clean", { days: 40, tax: false }), NOW)
     ).toBe(false)
+    const companyOnly = row("company-only", { days: 40, tax: false })
+    companyOnly.billing_address.company = "Solo Nombre"
+    expect(cartStillHoldsInvoiceId(companyOnly, NOW)).toBe(true)
+  })
+
+  it("clears a non-empty company when the cart has no invoice id", async () => {
+    const old = row("company-only", { days: 40, tax: false })
+    old.billing_address.company = "Solo Nombre"
+    const recent = row("company-recent", { days: 2, tax: false })
+    recent.billing_address.company = "Reciente"
+    const port = createPort([old, recent], true)
+
+    const cleaned = await purgeAbandonedCartInvoiceIds(port)
+
+    expect(cleaned).toBe(1)
+    expect(port.updates).toEqual([
+      {
+        id: "addr_company-only",
+        company: "",
+        metadata: { tax_id: "", tax_id_type: "" },
+      },
+    ])
+    expect(old.billing_address.company).toBe("")
+    expect(recent.billing_address.company).toBe("Reciente")
+    expect(port.logs.join("\n")).not.toContain("Solo Nombre")
   })
 
   it.each([
@@ -167,16 +192,14 @@ describe("abandoned cart invoice-id retention", () => {
 
       expect(cleaned).toBe(old.length)
       expect(port.updates.map((update) => update.id).sort()).toEqual(
-        old.map((cart) => cart.id).sort()
+        old.map((cart) => cart.billing_address.id).sort()
       )
 
       for (const update of port.updates) {
-        expect(update.data).toEqual({
-          billing_address: {
-            id: `addr_${update.id}`,
-            company: "",
-            metadata: { tax_id: "", tax_id_type: "" },
-          },
+        expect(update).toEqual({
+          id: update.id,
+          company: "",
+          metadata: { tax_id: "", tax_id_type: "" },
         })
       }
 
@@ -220,8 +243,8 @@ describe("abandoned cart invoice-id retention", () => {
     const cleaned = await purgeAbandonedCartInvoiceIds({
       now: NOW,
       listCarts: async () => [completed, recent],
-      updateCarts: async (id) => {
-        updates.push(id)
+      updateAddresses: async (data) => {
+        updates.push(data.id)
       },
       log: () => undefined,
     })
