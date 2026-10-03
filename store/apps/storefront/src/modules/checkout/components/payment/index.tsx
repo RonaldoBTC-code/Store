@@ -1,6 +1,18 @@
 "use client"
 import { RadioGroup } from "@headlessui/react"
-import { isStripeLike, paymentInfoMap } from "@lib/constants"
+import {
+  isPayphone,
+  isStripeLike,
+  payphoneStatusMessage,
+  paymentInfoMap,
+} from "@lib/constants"
+import {
+  PAYPHONE_BUTTON_LABEL,
+  PAYPHONE_LEAVING_COPY,
+  PAYPHONE_NO_CHARGE_COPY,
+  PAYPHONE_RETRY_LABEL,
+  showsNoCharge,
+} from "@lib/payphone-return"
 import { initiatePaymentSession } from "@lib/data/cart"
 import { CheckCircleSolid, CreditCard } from "@medusajs/icons"
 import ErrorMessage from "@modules/checkout/components/error-message"
@@ -17,7 +29,9 @@ import {
 } from "@modules/common/components/ui"
 import { HttpTypes } from "@medusajs/types"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+
+const PAYPHONE_NAVIGATION_MS = 4_000
 
 const Payment = ({
   cart,
@@ -31,6 +45,7 @@ const Payment = ({
   )
 
   const [isLoading, setIsLoading] = useState(false)
+  const [departing, setDeparting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [paymentComplete, setPaymentComplete] = useState(false)
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(
@@ -40,8 +55,15 @@ const Payment = ({
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
+  const departTimer = useRef<number | null>(null)
 
   const isOpen = searchParams.get("step") === "payment"
+  const payphoneCode = searchParams.get("payphone")
+  const showNoCharge = showsNoCharge(payphoneCode)
+  const payphoneMessage = showNoCharge
+    ? null
+    : payphoneStatusMessage(payphoneCode) ??
+      payphoneStatusMessage(searchParams.get("payphone_status"))
 
   const setPaymentMethod = async (method: string) => {
     setError(null)
@@ -76,7 +98,70 @@ const Payment = ({
     })
   }
 
+  const handlePayphone = async () => {
+    if (departing || isLoading) {
+      return
+    }
+
+    setIsLoading(true)
+    setError(null)
+    let leaving = false
+
+    try {
+      const collection = await initiatePaymentSession(cart, {
+        provider_id: selectedPaymentMethod,
+      })
+      const session = collection?.payment_collection?.payment_sessions?.find(
+        (paymentSession) => paymentSession.provider_id === selectedPaymentMethod
+      )
+      const payWithCard = session?.data?.pay_with_card
+
+      if (typeof payWithCard !== "string" || !payWithCard) {
+        setError("No pudimos iniciar el pago con PayPhone. Intenta de nuevo.")
+        return
+      }
+
+      let target: URL
+      try {
+        target = new URL(payWithCard)
+      } catch {
+        setError("No pudimos iniciar el pago con PayPhone. Intenta de nuevo.")
+        return
+      }
+
+      if (
+        target.protocol !== "https:" ||
+        target.hostname !== "pay.payphonetodoesposible.com" ||
+        target.username !== "" ||
+        target.password !== "" ||
+        target.port !== ""
+      ) {
+        setError("No pudimos iniciar el pago con PayPhone. Intenta de nuevo.")
+        return
+      }
+
+      leaving = true
+      setDeparting(true)
+      departTimer.current = window.setTimeout(() => {
+        setDeparting(false)
+        setIsLoading(false)
+      }, PAYPHONE_NAVIGATION_MS)
+      window.location.assign(target.toString())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      if (!leaving) {
+        setIsLoading(false)
+      }
+    }
+  }
+
   const handleSubmit = async () => {
+    if (isPayphone(selectedPaymentMethod)) {
+      await handlePayphone()
+      return
+    }
+
     setIsLoading(true)
     try {
       const shouldInputPaymentDetails =
@@ -110,6 +195,14 @@ const Payment = ({
     setError(null)
   }, [isOpen])
 
+  useEffect(() => {
+    return () => {
+      if (departTimer.current) {
+        window.clearTimeout(departTimer.current)
+      }
+    }
+  }, [])
+
   return (
     <div className="bg-ink-950 text-white">
       <div className="flex flex-row items-center justify-between mb-6">
@@ -139,6 +232,37 @@ const Payment = ({
         )}
       </div>
       <div>
+        {showNoCharge && (
+          <div className="mb-4">
+            <Text
+              className="text-rose-400 mb-4"
+              data-testid="payphone-payment-error"
+            >
+              {PAYPHONE_NO_CHARGE_COPY}
+            </Text>
+            <Button
+              type="button"
+              variant="secondary"
+              data-testid="payphone-retry"
+              onClick={() => {
+                const params = new URLSearchParams(searchParams)
+                params.delete("payphone")
+                params.set("step", "payment")
+                router.push(`${pathname}?${params.toString()}`, { scroll: false })
+              }}
+            >
+              {PAYPHONE_RETRY_LABEL}
+            </Button>
+          </div>
+        )}
+        {payphoneMessage && (
+          <Text
+            className="text-rose-400 mb-4"
+            data-testid="payphone-payment-error"
+          >
+            {payphoneMessage}
+          </Text>
+        )}
         <div className={isOpen ? "block" : "hidden"}>
           {!paidByGiftcard && availablePaymentMethods?.length && (
             <>
@@ -192,17 +316,31 @@ const Payment = ({
             size="large"
             className="mt-6"
             onClick={handleSubmit}
-            isLoading={isLoading}
+            isLoading={isLoading || departing}
             disabled={
+              departing ||
               (isStripeLike(selectedPaymentMethod) && !paymentComplete) ||
               (!selectedPaymentMethod && !paidByGiftcard)
             }
+            aria-busy={isLoading || departing}
             data-testid="submit-payment-button"
           >
-            {!activeSession && isStripeLike(selectedPaymentMethod)
-              ? "Enter payment details"
-              : "Continue to review"}
+            {isPayphone(selectedPaymentMethod) ? (
+              <span data-testid="payphone-payment-button">{PAYPHONE_BUTTON_LABEL}</span>
+            ) : !activeSession && isStripeLike(selectedPaymentMethod) ? (
+              "Enter payment details"
+            ) : (
+              "Continue to review"
+            )}
           </Button>
+          {isPayphone(selectedPaymentMethod) && (
+            <Text
+              className="txt-medium text-ui-fg-subtle mt-6"
+              data-testid="payphone-payment-waiting"
+            >
+              {PAYPHONE_LEAVING_COPY}
+            </Text>
+          )}
         </div>
 
         <div className={isOpen ? "hidden" : "block"}>

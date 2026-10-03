@@ -3,17 +3,26 @@ loadEnv("test", process.cwd());
 
 module.exports = {
   transform: {
-    "^.+\\.[jt]s$": [
+    "^.+\\.[jt]sx?$": [
       "@swc/jest",
       {
         jsc: {
-          parser: { syntax: "typescript", decorators: true },
+          parser: { syntax: "typescript", tsx: true, decorators: true },
+          transform: {
+            react: { runtime: "automatic" },
+          },
         },
       },
     ],
   },
   testEnvironment: "node",
-  moduleFileExtensions: ["js", "ts", "json"],
+  moduleFileExtensions: ["js", "ts", "tsx", "jsx", "json"],
+  moduleNameMapper: {
+    "^react$": "<rootDir>/../storefront/node_modules/react",
+    "^react/jsx-runtime$": "<rootDir>/../storefront/node_modules/react/jsx-runtime",
+    "^react-dom$": "<rootDir>/../storefront/node_modules/react-dom",
+    "^react-dom/server$": "<rootDir>/../storefront/node_modules/react-dom/server",
+  },
   modulePathIgnorePatterns: ["dist/", "<rootDir>/.medusa/"],
   setupFiles: ["./integration-tests/setup.js"],
 };

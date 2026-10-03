@@ -1,6 +1,6 @@
 "use client"
 
-import { isManual, isStripeLike } from "@lib/constants"
+import { isManual, isStripeLike, manualTestPaymentsEnabled } from "@lib/constants"
 import { placeOrder } from "@lib/data/cart"
 import { HttpTypes } from "@medusajs/types"
 import { Button } from "@modules/common/components/ui"
@@ -36,7 +36,7 @@ const PaymentButton: React.FC<PaymentButtonProps> = ({
           data-testid={dataTestId}
         />
       )
-    case isManual(paymentSession?.provider_id):
+    case isManual(paymentSession?.provider_id) && manualTestPaymentsEnabled():
       return (
         <ManualTestPaymentButton notReady={notReady} data-testid={dataTestId} />
       )
