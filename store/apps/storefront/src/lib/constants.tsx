@@ -33,7 +33,10 @@ export const paymentInfoMap: Record<
     title: "Manual Payment",
     icon: <CreditCard />,
   },
-  // Add more payment providers here
+  pp_btcpay_btcpay: {
+    title: "Pagar con Bitcoin / Lightning",
+    icon: <span className="text-xs font-semibold">BTC</span>,
+  },
 }
 
 // This only checks if it is native stripe or medusa payments for card payments, it ignores the other stripe-based providers
@@ -49,6 +52,15 @@ export const isPaypal = (providerId?: string) => {
 export const isManual = (providerId?: string) => {
   return providerId?.startsWith("pp_system_default")
 }
+
+export const isBtcpay = (providerId?: string) => {
+  return providerId?.startsWith("pp_btcpay_")
+}
+
+export const BTCPAY_PENDING_LIMIT = "BTCPAY_PENDING_LIMIT"
+
+export const BTCPAY_PENDING_LIMIT_MESSAGE =
+  "Ya tienes un pago pendiente, termínalo o espera a que venza"
 
 // Add currencies that don't need to be divided by 100
 export const noDivisionCurrencies = [

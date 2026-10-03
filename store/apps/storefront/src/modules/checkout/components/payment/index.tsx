@@ -1,6 +1,12 @@
 "use client"
 import { RadioGroup } from "@headlessui/react"
-import { isStripeLike, paymentInfoMap } from "@lib/constants"
+import {
+  BTCPAY_PENDING_LIMIT,
+  BTCPAY_PENDING_LIMIT_MESSAGE,
+  isBtcpay,
+  isStripeLike,
+  paymentInfoMap,
+} from "@lib/constants"
 import { initiatePaymentSession } from "@lib/data/cart"
 import { CheckCircleSolid, CreditCard } from "@medusajs/icons"
 import ErrorMessage from "@modules/checkout/components/error-message"
@@ -16,7 +22,7 @@ import {
   clx,
 } from "@modules/common/components/ui"
 import { HttpTypes } from "@medusajs/types"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useState } from "react"
 
 const Payment = ({
@@ -32,6 +38,7 @@ const Payment = ({
 
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pendingPaymentLink, setPendingPaymentLink] = useState<string | null>(null)
   const [paymentComplete, setPaymentComplete] = useState(false)
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(
     activeSession?.provider_id ?? ""
@@ -40,11 +47,13 @@ const Payment = ({
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
+  const { countryCode } = useParams()
 
   const isOpen = searchParams.get("step") === "payment"
 
   const setPaymentMethod = async (method: string) => {
     setError(null)
+    setPendingPaymentLink(null)
     setSelectedPaymentMethod(method)
     if (isStripeLike(method)) {
       await initiatePaymentSession(cart, {
@@ -85,10 +94,30 @@ const Payment = ({
       const checkActiveSession =
         activeSession?.provider_id === selectedPaymentMethod
 
-      if (!checkActiveSession) {
-        await initiatePaymentSession(cart, {
+      let paymentSession = checkActiveSession ? activeSession : undefined
+
+      if (!checkActiveSession || isBtcpay(selectedPaymentMethod)) {
+        const collection = await initiatePaymentSession(cart, {
           provider_id: selectedPaymentMethod,
+          data: isBtcpay(selectedPaymentMethod)
+            ? {
+                cart_id: cart.id,
+                redirect_url: `${window.location.origin}/${countryCode}/checkout/btcpay/return?cart_id=${cart.id}`,
+              }
+            : undefined,
         })
+        paymentSession = collection?.payment_collection?.payment_sessions?.find(
+          (session) => session.provider_id === selectedPaymentMethod
+        )
+      }
+
+      if (isBtcpay(selectedPaymentMethod)) {
+        const checkoutLink = paymentSession?.data?.checkout_link
+        if (typeof checkoutLink !== "string" || checkoutLink.length === 0) {
+          throw new Error("No se pudo abrir el pago con Bitcoin.")
+        }
+        window.location.assign(checkoutLink)
+        return
       }
 
       if (!shouldInputPaymentDetails) {
@@ -100,7 +129,11 @@ const Payment = ({
         )
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      const message = checkoutErrorMessage(err)
+      setError(message)
+      setPendingPaymentLink(
+        message === BTCPAY_PENDING_LIMIT_MESSAGE ? sameCartCheckoutLink(cart) : null
+      )
     } finally {
       setIsLoading(false)
     }
@@ -108,6 +141,7 @@ const Payment = ({
 
   useEffect(() => {
     setError(null)
+    setPendingPaymentLink(null)
   }, [isOpen])
 
   return (
@@ -161,6 +195,11 @@ const Payment = ({
                         paymentInfoMap={paymentInfoMap}
                         paymentProviderId={paymentMethod.id}
                         selectedPaymentOptionId={selectedPaymentMethod}
+                        data-testid={
+                          isBtcpay(paymentMethod.id)
+                            ? "btcpay-payment-option"
+                            : undefined
+                        }
                       />
                     )}
                   </div>
@@ -187,6 +226,15 @@ const Payment = ({
             error={error}
             data-testid="payment-method-error-message"
           />
+          {pendingPaymentLink ? (
+            <a
+              href={pendingPaymentLink}
+              className="txt-medium mt-2 inline-block underline"
+              data-testid="btcpay-open-pending-payment"
+            >
+              Abrir el pago pendiente
+            </a>
+          ) : null}
 
           <Button
             size="large"
@@ -199,9 +247,11 @@ const Payment = ({
             }
             data-testid="submit-payment-button"
           >
-            {!activeSession && isStripeLike(selectedPaymentMethod)
-              ? "Enter payment details"
-              : "Continue to review"}
+            {isBtcpay(selectedPaymentMethod)
+              ? "Pagar con Bitcoin / Lightning"
+              : !activeSession && isStripeLike(selectedPaymentMethod)
+                ? "Enter payment details"
+                : "Continue to review"}
           </Button>
         </div>
 
@@ -255,6 +305,40 @@ const Payment = ({
       <Divider className="mt-8" />
     </div>
   )
+}
+
+function sameCartCheckoutLink(cart: HttpTypes.StoreCart): string | null {
+  const sessions = cart.payment_collection?.payment_sessions ?? []
+  for (const session of sessions) {
+    if (!isBtcpay(session.provider_id)) {
+      continue
+    }
+    const data = (session.data ?? {}) as Record<string, unknown>
+    if (data.cart_id !== cart.id || typeof data.checkout_link !== "string") {
+      continue
+    }
+    try {
+      const url = new URL(data.checkout_link)
+      if (url.protocol === "https:" || url.protocol === "http:") {
+        return url.toString()
+      }
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+function checkoutErrorMessage(err: unknown) {
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    err.code === BTCPAY_PENDING_LIMIT
+  ) {
+    return BTCPAY_PENDING_LIMIT_MESSAGE
+  }
+  return err instanceof Error ? err.message : String(err)
 }
 
 export default Payment

@@ -16,6 +16,7 @@ type PaymentContainerProps = {
   disabled?: boolean
   paymentInfoMap: Record<string, { title: string; icon: JSX.Element }>
   children?: React.ReactNode
+  "data-testid"?: string
 }
 
 const PaymentContainer: React.FC<PaymentContainerProps> = ({
@@ -24,6 +25,7 @@ const PaymentContainer: React.FC<PaymentContainerProps> = ({
   paymentInfoMap,
   disabled = false,
   children,
+  "data-testid": dataTestId,
 }) => {
   const isDevelopment = process.env.NODE_ENV === "development"
 
@@ -32,6 +34,7 @@ const PaymentContainer: React.FC<PaymentContainerProps> = ({
       key={paymentProviderId}
       value={paymentProviderId}
       disabled={disabled}
+      data-testid={dataTestId}
       className={clx(
         "flex flex-col gap-y-2 text-small-regular cursor-pointer py-4 border rounded-rounded px-8 mb-2 hover:shadow-borders-interactive-with-active",
         {
