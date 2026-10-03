@@ -161,6 +161,87 @@ describe("backend tax id rules", () => {
     expect(message).toBeTruthy()
     expect(message).not.toMatch(/\d{6,}/)
   })
+
+  it("requires razón social only for a RUC and never echoes it", () => {
+    const ruc = "1790085783001"
+    const cedula = "1710034065"
+    const legalName = "Taller Norte"
+
+    const billing = (company: unknown, type: string, taxId: string) => ({
+      phone: "0991234567",
+      ...(company === undefined ? {} : { company }),
+      metadata: { tax_id_type: type, tax_id: taxId },
+    })
+
+    const reject = (company: unknown, type: string, taxId: string) => {
+      const body = { billing_address: billing(company, type, taxId) }
+      const before = JSON.stringify(body)
+      const message = cartUpdateRejection(body)
+      expect(message).toBeTruthy()
+      expect(JSON.stringify(body)).toBe(before)
+      expect(message).not.toContain(taxId)
+      expect(message).not.toMatch(/\d{6,}/)
+      if (typeof company === "string" && company.trim()) {
+        expect(message).not.toContain(company)
+      }
+      return message
+    }
+
+    expect(reject(undefined, "ruc", ruc)).toBe(
+      "Ingresa la razón social para facturar con RUC"
+    )
+    expect(reject("", "ruc", ruc)).toBe(
+      "Ingresa la razón social para facturar con RUC"
+    )
+    expect(reject(` ${legalName}`, "ruc", ruc)).toBe(
+      "La razón social no puede empezar ni terminar con espacios."
+    )
+    expect(reject(`${legalName} `, "ruc", ruc)).toBe(
+      "La razón social no puede empezar ni terminar con espacios."
+    )
+    expect(reject("A".repeat(301), "ruc", ruc)).toBe(
+      "La razón social no puede pasar de 300 caracteres."
+    )
+    expect(reject(`Norte\u0001`, "ruc", ruc)).toBe(
+      "La razón social tiene caracteres que no se pueden usar."
+    )
+    expect(reject("123456", "ruc", ruc)).toBe(
+      "La razón social no puede ser solo números."
+    )
+    expect(reject(ruc, "ruc", ruc)).toBe(
+      "La razón social no puede incluir el número de RUC."
+    )
+    expect(reject(`Casa ${ruc}`, "ruc", ruc)).toBe(
+      "La razón social no puede incluir el número de RUC."
+    )
+    expect(reject(`Casa ${ruc.slice(0, 3)}-${ruc.slice(3)}`, "ruc", ruc)).toBe(
+      "La razón social no puede incluir el número de RUC."
+    )
+    expect(reject(legalName, "cedula", cedula)).toBe(
+      "La razón social solo se usa al facturar con RUC."
+    )
+    expect(reject("   ", "cedula", cedula)).toBe(
+      "La razón social solo se usa al facturar con RUC."
+    )
+    expect(reject(legalName, "consumidor_final", CONSUMIDOR_FINAL_TAX_ID)).toBe(
+      "La razón social solo se usa al facturar con RUC."
+    )
+    expect(
+      cartCompletionRejection({
+        shipping_address: { phone: "0991234567" },
+        billing_address: billing(undefined, "ruc", ruc),
+      })
+    ).toBe("Ingresa la razón social para facturar con RUC")
+
+    const accepted = {
+      billing_address: billing(legalName, "ruc", ruc),
+      shipping_address: { phone: "0991234567" },
+    }
+    const before = JSON.stringify(accepted)
+    expect(cartUpdateRejection(accepted)).toBeNull()
+    expect(cartCompletionRejection(accepted)).toBeNull()
+    expect(JSON.stringify(accepted)).toBe(before)
+  })
 })
 
 describe("stripPublicTaxIdentifiers", () => {
@@ -296,14 +377,9 @@ describe("store response sanitizer", () => {
         ],
       },
     })
-    const addressBook = sanitizeStoreResponse(
-      "/store/customers/me/addresses",
-      {
-        addresses: [
-          { metadata: { tax_id: secret, tax_id_type: "cedula" } },
-        ],
-      }
-    )
+    const addressBook = sanitizeStoreResponse("/store/customers/me/addresses", {
+      addresses: [{ metadata: { tax_id: secret, tax_id_type: "cedula" } }],
+    })
 
     expect(
       payment.payment_collection.payment_sessions[0].data.metadata
@@ -381,9 +457,9 @@ describe("store response sanitizer", () => {
     const buffer = Buffer.from(JSON.stringify(invoiceBody()))
     res.send(buffer)
 
-    const parsed = sent.slice(0, 5).map((entry) =>
-      typeof entry === "string" ? JSON.parse(entry) : entry
-    )
+    const parsed = sent
+      .slice(0, 5)
+      .map((entry) => (typeof entry === "string" ? JSON.parse(entry) : entry))
 
     for (const entry of parsed) {
       expect(entry.cart.billing_address.metadata).toEqual({
@@ -487,6 +563,7 @@ describe("store routes do not serialize the cart tax id", () => {
         billing_address: {
           city: "Quito",
           phone: "0991234567",
+          company: type === "ruc" ? "Taller Norte" : "",
           metadata: {
             tax_id: taxId,
             tax_id_type: type,
@@ -543,7 +620,10 @@ describe("store routes do not serialize the cart tax id", () => {
           path: "/store/customers/me",
           body: { customer: { addresses: [address] } },
         },
-        { path: "/store/customers/me/addresses", body: { addresses: [address] } },
+        {
+          path: "/store/customers/me/addresses",
+          body: { addresses: [address] },
+        },
         { path: "/store/carts/cart_1", body: errorBody },
       ]
 

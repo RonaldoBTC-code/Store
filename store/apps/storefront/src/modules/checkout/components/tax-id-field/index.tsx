@@ -1,4 +1,8 @@
-import { TAX_ID_TYPES, type PublicTaxIdKind, type TaxIdType } from "@lib/util/ec-tax-id"
+import {
+  TAX_ID_TYPES,
+  type PublicTaxIdKind,
+  type TaxIdType,
+} from "@lib/util/ec-tax-id"
 import Input from "@modules/common/components/input"
 import NativeSelect from "@modules/common/components/native-select"
 import { useState } from "react"
@@ -23,6 +27,7 @@ const TaxIdField = ({
     taxIdKind === "consumidor_final" ? "consumidor_final" : "cedula"
   )
   const [taxId, setTaxId] = useState("")
+  const [company, setCompany] = useState("")
   const showSaved = taxIdSet && !editing
   const needsNumber = !showSaved && taxIdType !== "consumidor_final"
   const showReentryHint = needsNumber && (editing || requireReentry)
@@ -48,6 +53,7 @@ const TaxIdField = ({
           onClick={() => {
             setEditing(true)
             setTaxId("")
+            setCompany("")
             setTaxIdType(
               taxIdKind === "consumidor_final" ? "consumidor_final" : "cedula"
             )
@@ -56,6 +62,9 @@ const TaxIdField = ({
           Cambiar
         </button>
         <input type="hidden" name="billing_address.tax_id_keep" value="on" />
+        {taxIdKind === "consumidor_final" && (
+          <input type="hidden" name="billing_address.company" value="" />
+        )}
       </div>
     )
   }
@@ -71,6 +80,7 @@ const TaxIdField = ({
           if ((TAX_ID_TYPES as readonly string[]).includes(next)) {
             setTaxIdType(next as TaxIdType)
             setTaxId("")
+            setCompany("")
           }
         }}
         required
@@ -122,6 +132,31 @@ const TaxIdField = ({
         >
           Por seguridad, vuelve a escribir tu cédula
         </p>
+      )}
+      {taxIdType === "ruc" ? (
+        <>
+          <Input
+            id="billing_address.company"
+            label="Razón social"
+            name="billing_address.company"
+            autoComplete="organization"
+            required
+            maxLength={300}
+            title="Ingresa la razón social para facturar con RUC"
+            value={company}
+            onChange={(event) => setCompany(event.target.value)}
+            aria-describedby="billing-razon-social-help"
+            data-testid="billing-razon-social-input"
+          />
+          <p
+            id="billing-razon-social-help"
+            data-testid="billing-razon-social-help"
+          >
+            Como aparece en tu RUC
+          </p>
+        </>
+      ) : (
+        <input type="hidden" name="billing_address.company" value="" />
       )}
     </div>
   )

@@ -23,7 +23,7 @@ type AddressInput = {
   last_name: string
   address_1: string
   address_2: string
-  company: string
+  company?: string
   postal_code: string | null
   city: string
   country_code: string
@@ -75,9 +75,27 @@ export function checkoutAddressesFromForm(
   const billingCore = sameAsBilling
     ? shippingAddress
     : addressFromFields(formData, "billing_address", "Billing")
-  const billingAddress = taxId
-    ? { ...billingCore, metadata: taxId }
-    : billingCore
+  const billingAddress: AddressInput & {
+    metadata?: ReturnType<typeof parseTaxId>
+  } = {
+    ...billingCore,
+  }
+
+  if (keepTaxId) {
+    delete billingAddress.company
+  } else if (taxId?.tax_id_type === "ruc") {
+    const company = field(formData, "billing_address.company")
+    if (!company) {
+      throw new Error("Ingresa la razón social para facturar con RUC")
+    }
+    billingAddress.company = company
+    billingAddress.metadata = taxId
+  } else {
+    billingAddress.company = ""
+    if (taxId) {
+      billingAddress.metadata = taxId
+    }
+  }
 
   return {
     shipping_address: shippingAddress,

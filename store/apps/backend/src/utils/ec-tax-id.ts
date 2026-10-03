@@ -131,6 +131,18 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 const SHIPPING_TAX_MESSAGE =
   "La identificación tributaria no va en la dirección de envío."
 const CONSUMIDOR_FINAL_MESSAGE = "Consumidor final no lleva otro número."
+const RAZON_SOCIAL_REQUIRED = "Ingresa la razón social para facturar con RUC"
+const RAZON_SOCIAL_ONLY_RUC =
+  "La razón social solo se usa al facturar con RUC."
+const RAZON_SOCIAL_SPACES =
+  "La razón social no puede empezar ni terminar con espacios."
+const RAZON_SOCIAL_LENGTH = "La razón social no puede pasar de 300 caracteres."
+const RAZON_SOCIAL_CONTROL =
+  "La razón social tiene caracteres que no se pueden usar."
+const RAZON_SOCIAL_DIGITS = "La razón social no puede ser solo números."
+const RAZON_SOCIAL_CONTAINS_RUC =
+  "La razón social no puede incluir el número de RUC."
+const RAZON_SOCIAL_MAX_LENGTH = 300
 
 function invoiceKeysPresent(metadata: unknown): boolean {
   const record = asRecord(metadata)
@@ -176,6 +188,53 @@ export function invoiceMetadataRejection(metadata: unknown): string | null {
     return type === "cedula"
       ? "La cédula no es válida. Revisa que tenga 10 dígitos."
       : "El RUC no es válido. Revisa que tenga 13 dígitos."
+  }
+
+  return null
+}
+
+/**
+ * RUC invoices need a legal name. Other invoice types must not carry one.
+ * The value is accepted only when it is already trimmed. Nothing is rewritten.
+ */
+export function razonSocialRejection(
+  company: unknown,
+  taxType: string,
+  taxId: string
+): string | null {
+  if (company != null && typeof company !== "string") {
+    return taxType === "ruc" ? RAZON_SOCIAL_REQUIRED : RAZON_SOCIAL_ONLY_RUC
+  }
+
+  const value = typeof company === "string" ? company : ""
+
+  if (taxType !== "ruc") {
+    return value === "" ? null : RAZON_SOCIAL_ONLY_RUC
+  }
+
+  if (value === "") {
+    return RAZON_SOCIAL_REQUIRED
+  }
+
+  if (value !== value.trim()) {
+    return RAZON_SOCIAL_SPACES
+  }
+
+  if (value.length > RAZON_SOCIAL_MAX_LENGTH) {
+    return RAZON_SOCIAL_LENGTH
+  }
+
+  if (/\p{Cc}/u.test(value)) {
+    return RAZON_SOCIAL_CONTROL
+  }
+
+  const digits = value.replace(/\D/g, "")
+  if (value.includes(taxId) || digits.includes(taxId)) {
+    return RAZON_SOCIAL_CONTAINS_RUC
+  }
+
+  if (/^\d+$/.test(value)) {
+    return RAZON_SOCIAL_DIGITS
   }
 
   return null
@@ -259,12 +318,26 @@ export function cartUpdateRejection(body: unknown): string | null {
     return phone
   }
 
-  // Omitting metadata leaves the stored invoice id in place.
+  // Omitting metadata leaves the stored invoice id and legal name in place.
   if (!Object.prototype.hasOwnProperty.call(billing, "metadata")) {
     return null
   }
 
-  return invoiceMetadataRejection(billing.metadata)
+  const metadataMessage = invoiceMetadataRejection(billing.metadata)
+  if (metadataMessage) {
+    return metadataMessage
+  }
+
+  const metadata = asRecord(billing.metadata) as {
+    tax_id: string
+    tax_id_type: string
+  }
+
+  return razonSocialRejection(
+    billing.company,
+    metadata.tax_id_type,
+    metadata.tax_id
+  )
 }
 
 /**

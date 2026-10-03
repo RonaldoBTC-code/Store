@@ -19,6 +19,7 @@ export type AbandonedCartRecord = {
 export type InvoiceIdRemoval = {
   billing_address: {
     id?: string
+    company: ""
     metadata: {
       tax_id: ""
       tax_id_type: ""
@@ -76,9 +77,10 @@ export function cartStillHoldsInvoiceId(
 
 /**
  * Drops invoice ids from abandoned carts through the cart module.
- * Empty strings are Medusa's metadata delete marker. Orders are never loaded.
- * Safe to run twice: a cart with no invoice keys is skipped.
- * Logs only the count.
+ * Empty strings are Medusa's metadata delete marker. The same update sets
+ * billing_address.company to "" so a RUC legal name does not stay on the cart.
+ * Orders are never loaded. A cart with no invoice keys is skipped, so a second
+ * run updates nothing. Logs only the count.
  */
 export async function purgeAbandonedCartInvoiceIds(
   port: CartPort
@@ -109,6 +111,7 @@ export async function purgeAbandonedCartInvoiceIds(
 
       const removal: InvoiceIdRemoval = {
         billing_address: {
+          company: "",
           metadata: {
             tax_id: "",
             tax_id_type: "",

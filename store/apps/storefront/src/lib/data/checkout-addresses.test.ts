@@ -49,6 +49,7 @@ describe("checkoutAddressesFromForm", () => {
         tax_id_type: "cedula",
       },
     })
+    expect(billing).toMatchObject({ company: "" })
     expect(cartUpdateRejection(update)).toBeNull()
   })
 
@@ -64,23 +65,41 @@ describe("checkoutAddressesFromForm", () => {
           "billing_address.city": "Cuenca",
           "billing_address.country_code": "ec",
           "billing_address.phone": "0987654321",
+          "shipping_address.company": "Envio",
           "billing_address.tax_id_type": "ruc",
           "billing_address.tax_id": "1790085783001",
+          "billing_address.company": "  Taller Norte  ",
         },
         false
       )
     )
 
     expect(update.shipping_address).toMatchObject({ postal_code: "170150" })
+    expect(update.shipping_address).toMatchObject({ company: "Envio" })
     expect(update.billing_address).toMatchObject({
       first_name: "Luis",
       phone: "0987654321",
       city: "Cuenca",
+      company: "Taller Norte",
       metadata: {
         tax_id: "1790085783001",
         tax_id_type: "ruc",
       },
     })
+    expect(cartUpdateRejection(update)).toBeNull()
+  })
+
+  it("rejects a RUC without razón social", () => {
+    expect(() =>
+      checkoutAddressesFromForm(
+        form({
+          ...shipping,
+          "billing_address.tax_id_type": "ruc",
+          "billing_address.tax_id": "1790085783001",
+          "billing_address.company": "   ",
+        })
+      )
+    ).toThrow("Ingresa la razón social para facturar con RUC")
   })
 
   it("stores consumidor final without a personal number", () => {
@@ -93,6 +112,7 @@ describe("checkoutAddressesFromForm", () => {
     )
 
     expect(update.billing_address).toMatchObject({
+      company: "",
       metadata: {
         tax_id_type: "consumidor_final",
         tax_id: CONSUMIDOR_FINAL_TAX_ID,
@@ -110,6 +130,7 @@ describe("checkoutAddressesFromForm", () => {
     )
 
     expect(update.billing_address).not.toHaveProperty("metadata")
+    expect(update.billing_address).not.toHaveProperty("company")
     expect(JSON.stringify(update)).not.toContain("tax_id")
   })
 
