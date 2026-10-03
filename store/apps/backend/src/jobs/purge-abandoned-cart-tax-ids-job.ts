@@ -1,6 +1,7 @@
 import type { MedusaContainer } from "@medusajs/framework/types"
-import { Modules } from "@medusajs/framework/utils"
+import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 import {
+  clearUnlinkedCartInvoiceAddresses,
   purgeAbandonedCartInvoiceIds,
   type AbandonedCartFilters,
   type AbandonedCartRecord,
@@ -25,10 +26,14 @@ export default async function purgeAbandonedCartInvoiceIdsJob(
   const logger = container.resolve("logger") as {
     info: (message: string) => void
   }
+  const pg = container.resolve(ContainerRegistrationKeys.PG_CONNECTION) as {
+    raw(sql: string): Promise<unknown>
+  }
 
-  await purgeAbandonedCartInvoiceIds({
+  return purgeAbandonedCartInvoiceIds({
     listCarts: (filters, config) => cartModule.listCarts(filters, config),
     updateAddresses: (data) => cartModule.updateAddresses(data),
+    clearUnlinkedInvoiceAddresses: () => clearUnlinkedCartInvoiceAddresses(pg),
     log: (message) => logger.info(message),
   })
 }

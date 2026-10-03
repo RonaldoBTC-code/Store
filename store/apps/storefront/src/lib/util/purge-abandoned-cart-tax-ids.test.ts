@@ -150,6 +150,24 @@ describe("abandoned cart invoice-id retention", () => {
       note: "keep",
     }
     expect(cartStillHoldsInvoiceId(emptied, NOW)).toBe(false)
+    const whitespace = row("whitespace", { days: 40, tax: false })
+    whitespace.billing_address.company = " \t "
+    expect(cartStillHoldsInvoiceId(whitespace, NOW)).toBe(false)
+    const missingKeys = row("missing-keys", { days: 40, tax: false })
+    expect(cartStillHoldsInvoiceId(missingKeys, NOW)).toBe(false)
+    const nonString = row("non-string", { days: 40, tax: false })
+    nonString.billing_address.metadata = {
+      tax_id: 10,
+      tax_id_type: null,
+      note: "keep",
+    }
+    expect(cartStillHoldsInvoiceId(nonString, NOW)).toBe(false)
+    const padded = row("padded", { days: 40, tax: false })
+    padded.billing_address.company = "  Norte  "
+    expect(cartStillHoldsInvoiceId(padded, NOW)).toBe(true)
+    const typeOnly = row("type-only", { days: 40, tax: false })
+    typeOnly.billing_address.metadata = { tax_id_type: " cedula ", note: "keep" }
+    expect(cartStillHoldsInvoiceId(typeOnly, NOW)).toBe(true)
   })
 
   it("clears a non-empty company when the cart has no invoice id", async () => {
@@ -242,6 +260,38 @@ describe("abandoned cart invoice-id retention", () => {
       ])
     }
   )
+
+  it("counts unlinked address rows and skips them once they are clean", async () => {
+    const old = row("old-unlinked", { days: 40, tax: true })
+    const port = createPort([old], true)
+    let leftover = 2
+
+    const cleaned = await purgeAbandonedCartInvoiceIds({
+      ...port,
+      clearUnlinkedInvoiceAddresses: async () => {
+        const count = leftover
+        leftover = 0
+        return count
+      },
+    })
+
+    expect(cleaned).toBe(3)
+    expect(port.logs).toEqual([
+      "Abandoned cart invoice-id cleanup finished. carts_cleaned=1",
+    ])
+
+    port.logs.length = 0
+    const second = await purgeAbandonedCartInvoiceIds({
+      ...port,
+      clearUnlinkedInvoiceAddresses: async () => leftover,
+    })
+
+    expect(second).toBe(0)
+    expect(port.updates).toHaveLength(1)
+    expect(port.logs).toEqual([
+      "Abandoned cart invoice-id cleanup finished. carts_cleaned=0",
+    ])
+  })
 
   it("does not update a completed or recent cart a bad lister still returns", async () => {
     const completed = row("cart-done", { days: 40, completed: true, tax: true })

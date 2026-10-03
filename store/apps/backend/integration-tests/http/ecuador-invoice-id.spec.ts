@@ -10,19 +10,25 @@ import purgeAbandonedCartInvoiceIdsJob from "../../src/jobs/purge-abandoned-cart
 
 // Loaded at runtime so this spec can send the storefront payload without
 // pulling the storefront package into the backend tsconfig rootDir.
-function checkoutAddressesFromForm(formData: FormData): {
+function checkoutAddressesFromForm(
+  formData: FormData,
+  billingAddressId?: string | null
+): {
   shipping_address?: Record<string, unknown>
   billing_address?: Record<string, unknown>
   email?: string
 } {
   const loaded = require("../../../storefront/src/lib/data/checkout-addresses") as {
-    checkoutAddressesFromForm: (formData: FormData) => {
+    checkoutAddressesFromForm: (
+      formData: FormData,
+      billingAddressId?: string | null
+    ) => {
       shipping_address?: Record<string, unknown>
       billing_address?: Record<string, unknown>
       email?: string
     }
   }
-  return loaded.checkoutAddressesFromForm(formData)
+  return loaded.checkoutAddressesFromForm(formData, billingAddressId)
 }
 
 jest.setTimeout(180 * 1000)
@@ -306,24 +312,73 @@ medusaIntegrationTestRunner({
         const orderAddressId = order.billing_address?.id
         expect(orderAddressId).toBeTruthy()
 
-        await ageCart(abandoned.id)
-        await ageCart(companyOnly.id)
-        await purgeAbandonedCartInvoiceIdsJob(getContainer())
+        const recent = await createCart({
+          regionId: region.id,
+          company: "Reciente Sociedad",
+          metadata: { tax_id: "linked-marker", tax_id_type: "cedula" },
+        })
+        const recentAddressId = recent.billing_address?.id as string
+        expect(recentAddressId).toBeTruthy()
 
         const db = await sql()
+        const orphanId = "caaddr_01ORPHANINVOICEADDRESS01"
+        await db.raw(
+          `INSERT INTO cart_address (id, company, metadata, deleted_at, created_at, updated_at)
+           VALUES (?, ?, ?::jsonb, NOW(), NOW(), NOW())`,
+          [
+            orphanId,
+            LEGAL_NAME,
+            JSON.stringify({
+              tax_id: CEDULA,
+              tax_id_type: "cedula",
+              note: "orphan",
+            }),
+          ]
+        )
+        await db("cart_address")
+          .where({ id: recentAddressId })
+          .update({ deleted_at: new Date() })
+
+        await ageCart(abandoned.id)
+        await ageCart(companyOnly.id)
+        const firstPass = await purgeAbandonedCartInvoiceIdsJob(getContainer())
+        expect(firstPass).toBeGreaterThan(0)
+
         const abandonedCart = await db("cart").where({ id: abandoned.id }).first()
         const companyCart = await db("cart").where({ id: companyOnly.id }).first()
+        const recentCart = await db("cart").where({ id: recent.id }).first()
         expect(abandonedCart?.billing_address_id).toBe(abandonedAddressId)
         expect(companyCart?.billing_address_id).toBe(companyAddressId)
+        expect(recentCart?.billing_address_id).toBe(recentAddressId)
 
-        const abandonedRows = await addressRows(
-          [abandonedAddressId as string, companyAddressId as string],
+        const kept = await db("cart_address").where({ id: recentAddressId }).first()
+        expect(kept?.deleted_at).toBeTruthy()
+        expect(kept?.company).toBe("Reciente Sociedad")
+        expect(metadataOf(kept as AddressRow).tax_id).toBe("linked-marker")
+
+        const orphan = await db("cart_address").where({ id: orphanId }).first()
+        expect(orphan?.deleted_at).toBeTruthy()
+        expect(orphan?.company ?? "").toBe("")
+        expect(metadataOf(orphan as AddressRow)).toEqual({ note: "orphan" })
+
+        const cartAddresses = await addressRows(
+          [
+            abandonedAddressId as string,
+            companyAddressId as string,
+            orphanId,
+          ],
           [RUC, CEDULA, LEGAL_NAME, COMPANY_ONLY]
         )
-
-        expect(abandonedRows.length).toBeGreaterThan(0)
-        for (const row of abandonedRows) {
+        expect(cartAddresses.map((row) => row.id).sort()).toEqual(
+          [abandonedAddressId, companyAddressId, orphanId].sort()
+        )
+        for (const row of cartAddresses) {
           assertAddressClean(row)
+          const text = `${row.company ?? ""}\n${JSON.stringify(metadataOf(row))}`
+          expect(text).not.toContain(CEDULA)
+          expect(text).not.toContain(RUC)
+          expect(text).not.toContain(LEGAL_NAME)
+          expect(text).not.toContain(COMPANY_ONLY)
         }
 
         const orderRows = await db("order_address")
@@ -333,18 +388,17 @@ medusaIntegrationTestRunner({
         expect(metadataOf(orderRows[0]).tax_id).toBe(CEDULA)
         expect(metadataOf(orderRows[0]).tax_id_type).toBe("cedula")
 
-        await purgeAbandonedCartInvoiceIdsJob(getContainer())
-        const secondPass = await addressRows(
-          [abandonedAddressId as string, companyAddressId as string],
-          [RUC, CEDULA, LEGAL_NAME, COMPANY_ONLY]
-        )
-        for (const row of secondPass) {
-          assertAddressClean(row)
-        }
+        await ageCart(abandoned.id)
+        await ageCart(companyOnly.id)
+        const secondPass = await purgeAbandonedCartInvoiceIdsJob(getContainer())
+        expect(secondPass).toBe(0)
         const orderAfter = await db("order_address")
           .whereIn("id", [orderAddressId as string])
           .select("id", "company", "metadata", "deleted_at")
         expect(metadataOf(orderAfter[0]).tax_id).toBe(CEDULA)
+        const orphanAfter = await db("cart_address").where({ id: orphanId }).first()
+        expect(orphanAfter?.deleted_at).toBeTruthy()
+        expect(metadataOf(orphanAfter as AddressRow)).toEqual({ note: "orphan" })
       })
 
       it("rejects an invalid tax id and razón social in the update workflow and the store route", async () => {
@@ -530,7 +584,7 @@ medusaIntegrationTestRunner({
         return data
       }
 
-      it("reuses the billing address when checkout omits the address id", async () => {
+      it("sends the saved billing address id from checkout", async () => {
         const region = await seedRegion()
         const cart = await createCart({
           regionId: region.id,
@@ -558,9 +612,10 @@ medusaIntegrationTestRunner({
             "billing_address.tax_id_type": "ruc",
             "billing_address.tax_id": PRIVATE_RUC,
             "billing_address.company": LEGAL_NAME,
-          })
+          }),
+          billingId
         )
-        expect(update.billing_address).not.toHaveProperty("id")
+        expect(update.billing_address?.id).toBe(billingId)
         expect(update.shipping_address).not.toHaveProperty("id")
 
         await http.post(`/store/carts/${cart.id}`, update)
@@ -593,7 +648,8 @@ medusaIntegrationTestRunner({
         })
         const addressId = cart.billing_address?.id as string
         await ageCart(cart.id)
-        await purgeAbandonedCartInvoiceIdsJob(getContainer())
+        const cleared = await purgeAbandonedCartInvoiceIdsJob(getContainer())
+        expect(cleared).toBeGreaterThan(0)
 
         const db = await sql()
         const cleaned = await db("cart_address").where({ id: addressId }).first()
@@ -615,7 +671,8 @@ medusaIntegrationTestRunner({
             company: "",
           })
         await ageCart(cart.id)
-        await purgeAbandonedCartInvoiceIdsJob(getContainer())
+        const second = await purgeAbandonedCartInvoiceIdsJob(getContainer())
+        expect(second).toBe(0)
 
         const stored = await db("cart_address").where({ id: addressId }).first()
         expect(metadataOf(stored as AddressRow)).toEqual({

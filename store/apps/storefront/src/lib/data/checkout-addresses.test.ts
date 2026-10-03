@@ -50,7 +50,17 @@ describe("checkoutAddressesFromForm", () => {
       },
     })
     expect(billing).toMatchObject({ company: "" })
+    expect(billing).not.toHaveProperty("id")
     expect(cartUpdateRejection(update)).toBeNull()
+  })
+
+  it("sends the saved billing address id and ignores a blank one", () => {
+    const saved = checkoutAddressesFromForm(form(shipping), " caaddr_saved ")
+    expect(saved.billing_address).toMatchObject({ id: "caaddr_saved" })
+    expect(saved.shipping_address).not.toHaveProperty("id")
+
+    const blank = checkoutAddressesFromForm(form(shipping), "   ")
+    expect(blank.billing_address).not.toHaveProperty("id")
   })
 
   it("keeps a provided postal code and a separate billing phone", () => {

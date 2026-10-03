@@ -54,11 +54,11 @@ function assignAddressId(
 }
 
 /**
- * Checkout sends billing_address and shipping_address without ids.
- * Medusa then inserts a new cart_address and leaves the previous row,
- * still holding the invoice id, with nothing pointing at it.
- * The store route reads req.validatedBody, so the stored ids are copied
- * onto both the raw body and the validated body.
+ * The storefront sends the saved billing address id. This still copies a
+ * stored billing or shipping id when the request omitted it, onto both the
+ * raw body and req.validatedBody, which is what the store route reads.
+ * Without an id, Medusa inserts a new cart_address and leaves the previous
+ * row, still holding the invoice id, with nothing pointing at it.
  */
 async function reuseStoredAddressIds(req: MedusaRequest) {
   const cartId = req.params?.id

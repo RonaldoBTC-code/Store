@@ -353,7 +353,10 @@ export async function setAddresses(currentState: unknown, formData: FormData) {
       throw new Error("No form data found when setting addresses")
     }
     await resolveCartId(getCartId)
-    await updateCart(checkoutAddressesFromForm(formData))
+    const cart = await retrieveCart("+billing_address.id")
+    await updateCart(
+      checkoutAddressesFromForm(formData, cart?.billing_address?.id)
+    )
   } catch (e: any) {
     return e.message
   }

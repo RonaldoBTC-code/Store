@@ -31,12 +31,22 @@ export type InvoiceAddressClearance = {
   }
 }
 
+type QueryRunner = {
+  raw(sql: string): Promise<unknown>
+}
+
 type CartPort = {
   listCarts: (
     filters: AbandonedCartFilters,
     config: { take: number; skip: number; relations: string[] }
   ) => Promise<AbandonedCartRecord[]>
   updateAddresses: (data: InvoiceAddressClearance) => Promise<unknown>
+  /**
+   * Blanks invoice fields on cart_address rows that no cart and no order
+   * still reference, including rows with deleted_at set. Returns how many
+   * rows the update changed.
+   */
+  clearUnlinkedInvoiceAddresses?: () => Promise<number>
   log: (message: string) => void
   now?: Date
 }
@@ -68,44 +78,27 @@ export function cartStillHoldsInvoiceId(
     return false
   }
 
-  const company = cart.billing_address?.company
-  if (typeof company === "string" && company !== "") {
-    return true
-  }
-
-  const metadata = cart.billing_address?.metadata
-  if (!metadata) {
-    return false
-  }
-
-  return invoiceMetadataStillSet(metadata, "tax_id") ||
-    invoiceMetadataStillSet(metadata, "tax_id_type")
+  const billing = cart.billing_address
+  return (
+    nonEmptyTrimmed(billing?.company) ||
+    nonEmptyTrimmed(billing?.metadata?.tax_id) ||
+    nonEmptyTrimmed(billing?.metadata?.tax_id_type)
+  )
 }
 
-function invoiceMetadataStillSet(
-  metadata: Record<string, unknown>,
-  key: string
-): boolean {
-  if (!Object.prototype.hasOwnProperty.call(metadata, key)) {
-    return false
-  }
-
-  const value = metadata[key]
-  if (typeof value !== "string") {
-    return value != null
-  }
-
-  return value.trim() !== ""
+/** A stored '' and a removed key are both clean. Whitespace is clean too. */
+function nonEmptyTrimmed(value: unknown): boolean {
+  return typeof value === "string" && value.trim() !== ""
 }
 
 /**
  * Drops invoice ids from abandoned carts through the cart module's address
  * update. Empty strings are Medusa's metadata delete marker. The address id
  * is required so the same row is updated. `company` is set to "".
- * Carts whose billing company is non-empty are cleaned even when they have
- * no invoice metadata. Orders are never loaded. A cart with neither an
- * invoice key nor a company is skipped, so a second run updates nothing.
- * Logs only the count.
+ * A cart is selected only when company, tax_id, or tax_id_type is a
+ * non-empty string after trim. A missing key, a blank string, and whitespace
+ * are already clean, so a second run updates nothing. Orders are never loaded.
+ * Logs only the cart count.
  */
 export async function purgeAbandonedCartInvoiceIds(
   port: CartPort
@@ -113,7 +106,7 @@ export async function purgeAbandonedCartInvoiceIds(
   const now = port.now ?? new Date()
   const filters = abandonedCartListFilters(now)
   let skip = 0
-  let cleaned = 0
+  let cartsCleaned = 0
   const cleanedIds = new Set<string>()
 
   for (let pass = 0; pass < 10000; pass++) {
@@ -150,7 +143,7 @@ export async function purgeAbandonedCartInvoiceIds(
 
       await port.updateAddresses(removal)
       cleanedIds.add(cart.id)
-      cleaned += 1
+      cartsCleaned += 1
       cleanedThisPage += 1
     }
 
@@ -181,9 +174,78 @@ export async function purgeAbandonedCartInvoiceIds(
     skip = cleanedDroppedOut ? 0 : skip + batch.length
   }
 
+  const unlinkedCleared = port.clearUnlinkedInvoiceAddresses
+    ? await port.clearUnlinkedInvoiceAddresses()
+    : 0
+
   port.log(
-    `Abandoned cart invoice-id cleanup finished. carts_cleaned=${cleaned}`
+    `Abandoned cart invoice-id cleanup finished. carts_cleaned=${cartsCleaned}`
   )
 
-  return cleaned
+  return cartsCleaned + unlinkedCleared
+}
+
+/**
+ * Invoice data left on a cart_address after the cart started pointing at a
+ * new row. The row is updated in place: company is blanked and the invoice
+ * metadata keys are removed. deleted_at is left as it is, and the row is not
+ * deleted. A row still referenced by any cart or any order is left alone,
+ * including when that cart or order is soft-deleted.
+ */
+export async function clearUnlinkedCartInvoiceAddresses(
+  db: QueryRunner
+): Promise<number> {
+  const result = await db.raw(`
+    UPDATE cart_address AS address
+    SET
+      company = '',
+      metadata = COALESCE(address.metadata::jsonb, '{}'::jsonb)
+        - 'tax_id'
+        - 'tax_id_type',
+      updated_at = NOW()
+    WHERE (
+      btrim(COALESCE(address.company, '')) <> ''
+      OR (
+        jsonb_typeof(COALESCE(address.metadata::jsonb, '{}'::jsonb)->'tax_id') = 'string'
+        AND btrim(address.metadata->>'tax_id') <> ''
+      )
+      OR (
+        jsonb_typeof(COALESCE(address.metadata::jsonb, '{}'::jsonb)->'tax_id_type') = 'string'
+        AND btrim(address.metadata->>'tax_id_type') <> ''
+      )
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM cart
+      WHERE cart.billing_address_id = address.id
+         OR cart.shipping_address_id = address.id
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM "order"
+      WHERE "order".billing_address_id = address.id
+         OR "order".shipping_address_id = address.id
+    )
+    RETURNING address.id
+  `)
+
+  return updatedRowCount(result)
+}
+
+export function updatedRowCount(result: unknown): number {
+  if (Array.isArray(result)) {
+    const rows = result[0]
+    return Array.isArray(rows) ? rows.length : 0
+  }
+
+  if (!result || typeof result !== "object") {
+    return 0
+  }
+
+  const record = result as { rowCount?: unknown; rows?: unknown }
+  if (typeof record.rowCount === "number") {
+    return record.rowCount
+  }
+
+  return Array.isArray(record.rows) ? record.rows.length : 0
 }

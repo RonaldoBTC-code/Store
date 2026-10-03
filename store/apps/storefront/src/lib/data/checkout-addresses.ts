@@ -19,6 +19,7 @@ function requirePhone(value: string, which: "Shipping" | "Billing"): string {
 }
 
 type AddressInput = {
+  id?: string
   first_name: string
   last_name: string
   address_1: string
@@ -54,9 +55,12 @@ function addressFromFields(
  * Builds the cart update for checkout.
  * The invoice id is stored only on the billing address metadata so Medusa
  * copies it onto the order when the cart is completed.
+ * The saved billing address id is sent again so the update rewrites that row
+ * instead of inserting a new one and leaving the invoice id behind.
  */
 export function checkoutAddressesFromForm(
-  formData: FormData
+  formData: FormData,
+  billingAddressId?: string | null
 ): HttpTypes.StoreUpdateCart {
   const shippingAddress = addressFromFields(
     formData,
@@ -79,6 +83,10 @@ export function checkoutAddressesFromForm(
     metadata?: ReturnType<typeof parseTaxId>
   } = {
     ...billingCore,
+  }
+  const savedBillingId = billingAddressId?.trim()
+  if (savedBillingId) {
+    billingAddress.id = savedBillingId
   }
 
   if (keepTaxId) {
