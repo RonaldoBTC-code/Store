@@ -114,6 +114,20 @@ describe("backend tax id rules", () => {
     expect(JSON.stringify(dashed)).toBe(dashedBefore)
   })
 
+  it("requires a phone on checkout and completion, not on a region change", () => {
+    const regionChange = {
+      region_id: "reg_other",
+      shipping_address: { country_code: "pe" },
+    }
+
+    expect(cartUpdateRejection(regionChange)).toBe(
+      "Shipping phone is required."
+    )
+    expect(
+      cartUpdateRejection(regionChange, { requirePhone: false })
+    ).toBeNull()
+  })
+
   it("requires a phone and allows an empty postal code", () => {
     expect(
       cartUpdateRejection({

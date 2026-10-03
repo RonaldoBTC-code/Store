@@ -301,11 +301,18 @@ function phoneRejection(
 }
 
 /**
- * Route and updateCartWorkflow gate. Returns an error message, or null.
- * The body is not modified: Medusa persists the validated copy, not this object
- * after a middleware rewrite.
+ * Route, checkout-address, and completion gate. Returns an error message, or null.
+ * The body is not modified.
+ *
+ * `requirePhone` is on for the checkout address step and for completion.
+ * updateCartWorkflow turns it off: a region change builds
+ * `shipping_address: { country_code }` with no phone before the validate hook.
  */
-export function cartUpdateRejection(body: unknown): string | null {
+export function cartUpdateRejection(
+  body: unknown,
+  options?: { requirePhone?: boolean }
+): string | null {
+  const requirePhone = options?.requirePhone !== false
   const record = asRecord(body)
   if (!record) {
     return null
@@ -316,14 +323,19 @@ export function cartUpdateRejection(body: unknown): string | null {
     if (shipping !== null && shipping !== undefined) {
       const address = asRecord(shipping)
       if (!address) {
-        return "Shipping phone is required."
-      }
-      if (invoiceKeysPresent(address.metadata)) {
-        return SHIPPING_TAX_MESSAGE
-      }
-      const phone = phoneRejection(address, "Shipping")
-      if (phone) {
-        return phone
+        if (requirePhone) {
+          return "Shipping phone is required."
+        }
+      } else {
+        if (invoiceKeysPresent(address.metadata)) {
+          return SHIPPING_TAX_MESSAGE
+        }
+        if (requirePhone) {
+          const phone = phoneRejection(address, "Shipping")
+          if (phone) {
+            return phone
+          }
+        }
       }
     }
   }
@@ -337,9 +349,11 @@ export function cartUpdateRejection(body: unknown): string | null {
     return TAX_ID_REQUIRED_MESSAGE
   }
 
-  const phone = phoneRejection(billing, "Billing")
-  if (phone) {
-    return phone
+  if (requirePhone) {
+    const phone = phoneRejection(billing, "Billing")
+    if (phone) {
+      return phone
+    }
   }
 
   // Omitting metadata leaves the stored invoice id in place. A non-empty

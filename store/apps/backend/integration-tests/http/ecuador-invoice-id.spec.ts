@@ -8,13 +8,32 @@ import {
 } from "@medusajs/medusa/core-flows"
 import purgeAbandonedCartInvoiceIdsJob from "../../src/jobs/purge-abandoned-cart-tax-ids-job"
 
+// Loaded at runtime so this spec can send the storefront payload without
+// pulling the storefront package into the backend tsconfig rootDir.
+function checkoutAddressesFromForm(formData: FormData): {
+  shipping_address?: Record<string, unknown>
+  billing_address?: Record<string, unknown>
+  email?: string
+} {
+  const loaded = require("../../../storefront/src/lib/data/checkout-addresses") as {
+    checkoutAddressesFromForm: (formData: FormData) => {
+      shipping_address?: Record<string, unknown>
+      billing_address?: Record<string, unknown>
+      email?: string
+    }
+  }
+  return loaded.checkoutAddressesFromForm(formData)
+}
+
 jest.setTimeout(180 * 1000)
 
 const CEDULA = "1710034065"
 const RUC = "1710034065001"
 const INVALID_CEDULA = "1710034066"
 const LEGAL_NAME = "Taller Norte"
+const PREVIOUS_COMPANY = "Nombre Viejo"
 const COMPANY_ONLY = "Solo Nombre"
+const PRIVATE_RUC = "1790085783001"
 const NUMBER_MESSAGE =
   "Escribe el nombre de la empresa o persona, sin el número de RUC ni de cédula"
 
@@ -148,7 +167,7 @@ medusaIntegrationTestRunner({
         return getContainer().resolve(ContainerRegistrationKeys.PG_CONNECTION) as Sql
       }
 
-      async function seedRegion() {
+      async function seedRegion(countryCode = "ec", name = "Ecuador") {
         const regionModule = getContainer().resolve(Modules.REGION) as {
           createRegions(data: {
             name: string
@@ -158,9 +177,9 @@ medusaIntegrationTestRunner({
         }
 
         return regionModule.createRegions({
-          name: "Ecuador",
+          name,
           currency_code: "usd",
-          countries: ["ec"],
+          countries: [countryCode],
         })
       }
 
@@ -168,6 +187,7 @@ medusaIntegrationTestRunner({
         regionId: string
         company?: string
         metadata?: Record<string, unknown> | null
+        shipping?: boolean
       }) {
         const cartModule = getContainer().resolve(Modules.CART) as unknown as {
           createCarts(data: Record<string, unknown>): Promise<{
@@ -193,13 +213,26 @@ medusaIntegrationTestRunner({
           billing.metadata = input.metadata
         }
 
-        return cartModule.createCarts({
+        const data: Record<string, unknown> = {
           currency_code: "usd",
           region_id: input.regionId,
           sales_channel_id: salesChannelId,
           email: "ana@example.com",
           billing_address: billing,
-        })
+        }
+
+        if (input.shipping) {
+          data.shipping_address = {
+            first_name: "Ana",
+            last_name: "Perez",
+            address_1: "Av Amazonas",
+            city: "Quito",
+            country_code: "ec",
+            phone: "0991234567",
+          }
+        }
+
+        return cartModule.createCarts(data)
       }
 
       async function ageCart(cartId: string) {
@@ -486,6 +519,160 @@ medusaIntegrationTestRunner({
 
         expect(messageOf(route)).toBe(NUMBER_MESSAGE)
         expect(messageOf(route)).not.toContain(RUC.slice(0, 10))
+      })
+
+      function checkoutForm(fields: Record<string, string>) {
+        const data = new FormData()
+        for (const [key, value] of Object.entries(fields)) {
+          data.set(key, value)
+        }
+        data.set("same_as_billing", "on")
+        return data
+      }
+
+      it("reuses the billing address when checkout omits the address id", async () => {
+        const region = await seedRegion()
+        const cart = await createCart({
+          regionId: region.id,
+          company: PREVIOUS_COMPANY,
+          metadata: { tax_id: CEDULA, tax_id_type: "cedula", note: "keep" },
+          shipping: true,
+        })
+        const billingId = cart.billing_address?.id as string
+        const db = await sql()
+        const before = await db("cart").where({ id: cart.id }).first()
+        const shippingId = before?.shipping_address_id as string
+        expect(billingId).toBeTruthy()
+        expect(shippingId).toBeTruthy()
+
+        const update = checkoutAddressesFromForm(
+          checkoutForm({
+            "shipping_address.first_name": "Ana",
+            "shipping_address.last_name": "Perez",
+            "shipping_address.address_1": "Av Amazonas",
+            "shipping_address.city": "Quito",
+            "shipping_address.country_code": "ec",
+            "shipping_address.province": "Pichincha",
+            "shipping_address.phone": "0991234567",
+            email: "ana@example.com",
+            "billing_address.tax_id_type": "ruc",
+            "billing_address.tax_id": PRIVATE_RUC,
+            "billing_address.company": LEGAL_NAME,
+          })
+        )
+        expect(update.billing_address).not.toHaveProperty("id")
+        expect(update.shipping_address).not.toHaveProperty("id")
+
+        await http.post(`/store/carts/${cart.id}`, update)
+
+        const after = await db("cart").where({ id: cart.id }).first()
+        expect(after?.billing_address_id).toBe(billingId)
+        expect(after?.shipping_address_id).toBe(shippingId)
+
+        const leaked = await db("cart_address")
+          .select("id", "company", "metadata", "deleted_at")
+          .whereRaw(
+            "COALESCE(metadata::text, '') LIKE ? OR COALESCE(company, '') = ?",
+            [`%${CEDULA}%`, PREVIOUS_COMPANY]
+          )
+        expect(leaked).toEqual([])
+
+        const current = await db("cart_address").where({ id: billingId }).first()
+        expect(current?.deleted_at ?? null).toBeNull()
+        expect(metadataOf(current as AddressRow).tax_id).toBe(PRIVATE_RUC)
+        expect(metadataOf(current as AddressRow).tax_id_type).toBe("ruc")
+        expect(current?.company).toBe(LEGAL_NAME)
+      })
+
+      it("removes invoice keys when metadata is set to an empty string", async () => {
+        const region = await seedRegion()
+        const cart = await createCart({
+          regionId: region.id,
+          company: LEGAL_NAME,
+          metadata: { tax_id: RUC, tax_id_type: "ruc", note: "keep" },
+        })
+        const addressId = cart.billing_address?.id as string
+        await ageCart(cart.id)
+        await purgeAbandonedCartInvoiceIdsJob(getContainer())
+
+        const db = await sql()
+        const cleaned = await db("cart_address").where({ id: addressId }).first()
+        const cleanedMetadata = metadataOf(cleaned as AddressRow)
+        expect(cleanedMetadata).not.toHaveProperty("tax_id")
+        expect(cleanedMetadata).not.toHaveProperty("tax_id_type")
+        expect(JSON.stringify(cleanedMetadata)).not.toContain('""')
+        expect(cleanedMetadata.note).toBe("keep")
+        expect(cleaned?.company ?? "").toBe("")
+
+        await db("cart_address")
+          .where({ id: addressId })
+          .update({
+            metadata: {
+              tax_id: "",
+              tax_id_type: "",
+              note: "keep",
+            },
+            company: "",
+          })
+        await ageCart(cart.id)
+        await purgeAbandonedCartInvoiceIdsJob(getContainer())
+
+        const stored = await db("cart_address").where({ id: addressId }).first()
+        expect(metadataOf(stored as AddressRow)).toEqual({
+          tax_id: "",
+          tax_id_type: "",
+          note: "keep",
+        })
+        expect(stored?.company ?? "").toBe("")
+      })
+
+      it("accepts a region change that builds a shipping address without a phone", async () => {
+        const ecuador = await seedRegion()
+        const peru = await seedRegion("pe", "Peru")
+        const cart = await createCart({
+          regionId: ecuador.id,
+          metadata: { tax_id: CEDULA, tax_id_type: "cedula" },
+        })
+
+        await updateCartWorkflow(getContainer()).run({
+          input: { id: cart.id, region_id: peru.id },
+        })
+
+        const db = await sql()
+        const updated = await db("cart").where({ id: cart.id }).first()
+        expect(updated?.region_id).toBe(peru.id)
+        const shippingId = updated?.shipping_address_id as string
+        expect(shippingId).toBeTruthy()
+        const shipping = await db("cart_address").where({ id: shippingId }).first()
+        expect(shipping?.country_code).toBe("pe")
+        expect(shipping?.phone ?? null).toBeNull()
+
+        const missingPhone = await rejectedPost(`/store/carts/${cart.id}`, {
+          shipping_address: {
+            first_name: "Ana",
+            last_name: "Perez",
+            address_1: "Av Larco",
+            city: "Lima",
+            country_code: "pe",
+          },
+          billing_address: {
+            first_name: "Ana",
+            last_name: "Perez",
+            address_1: "Av Larco",
+            city: "Lima",
+            country_code: "pe",
+            phone: "0991234567",
+            metadata: { tax_id: CEDULA, tax_id_type: "cedula" },
+          },
+        })
+        expect(messageOf(missingPhone)).toBe("Shipping phone is required.")
+
+        await makeCartPayable(cart.id, peru.id)
+        expect(
+          await workflowMessage(
+            completeCartWorkflow(getContainer()).run({ input: { id: cart.id } })
+          )
+        ).toBe("Shipping phone is required.")
       })
     })
   },

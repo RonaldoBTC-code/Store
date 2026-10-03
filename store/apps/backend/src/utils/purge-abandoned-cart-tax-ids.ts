@@ -78,10 +78,24 @@ export function cartStillHoldsInvoiceId(
     return false
   }
 
-  return (
-    Object.prototype.hasOwnProperty.call(metadata, "tax_id") ||
-    Object.prototype.hasOwnProperty.call(metadata, "tax_id_type")
-  )
+  return invoiceMetadataStillSet(metadata, "tax_id") ||
+    invoiceMetadataStillSet(metadata, "tax_id_type")
+}
+
+function invoiceMetadataStillSet(
+  metadata: Record<string, unknown>,
+  key: string
+): boolean {
+  if (!Object.prototype.hasOwnProperty.call(metadata, key)) {
+    return false
+  }
+
+  const value = metadata[key]
+  if (typeof value !== "string") {
+    return value != null
+  }
+
+  return value.trim() !== ""
 }
 
 /**

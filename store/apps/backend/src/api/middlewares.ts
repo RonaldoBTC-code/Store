@@ -4,6 +4,7 @@ import {
   type MedusaRequest,
   type MedusaResponse,
 } from "@medusajs/framework/http"
+import { Modules } from "@medusajs/framework/utils"
 import {
   cartCompletionRejection,
   cartUpdateRejection,
@@ -29,7 +30,84 @@ function stripTaxIdFromStoreResponse(
   next()
 }
 
-function validateTaxIdOnCartUpdate(
+function asAddress(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null
+  }
+
+  return value as Record<string, unknown>
+}
+
+function assignAddressId(
+  holder: Record<string, unknown> | null,
+  key: "billing_address" | "shipping_address",
+  id: string | undefined
+) {
+  if (!holder || !id) {
+    return
+  }
+
+  const address = asAddress(holder[key])
+  if (address && typeof address.id !== "string") {
+    address.id = id
+  }
+}
+
+/**
+ * Checkout sends billing_address and shipping_address without ids.
+ * Medusa then inserts a new cart_address and leaves the previous row,
+ * still holding the invoice id, with nothing pointing at it.
+ * The store route reads req.validatedBody, so the stored ids are copied
+ * onto both the raw body and the validated body.
+ */
+async function reuseStoredAddressIds(req: MedusaRequest) {
+  const cartId = req.params?.id
+  const body = asAddress(req.body)
+  const validated = asAddress(
+    (req as MedusaRequest & { validatedBody?: unknown }).validatedBody
+  )
+  if (!cartId || (!body && !validated)) {
+    return
+  }
+
+  const source = validated ?? body
+  const billing = asAddress(source?.billing_address)
+  const shipping = asAddress(source?.shipping_address)
+  const billingNeedsId = !!billing && typeof billing.id !== "string"
+  const shippingNeedsId = !!shipping && typeof shipping.id !== "string"
+  if (!billingNeedsId && !shippingNeedsId) {
+    return
+  }
+
+  try {
+    const cartModule = req.scope.resolve(Modules.CART) as {
+      retrieveCart(
+        id: string,
+        config: { relations: string[] }
+      ): Promise<{
+        billing_address?: { id?: string } | null
+        shipping_address?: { id?: string } | null
+      }>
+    }
+    const cart = await cartModule.retrieveCart(cartId, {
+      relations: ["billing_address", "shipping_address"],
+    })
+
+    if (billingNeedsId) {
+      assignAddressId(body, "billing_address", cart.billing_address?.id)
+      assignAddressId(validated, "billing_address", cart.billing_address?.id)
+    }
+    if (shippingNeedsId) {
+      assignAddressId(body, "shipping_address", cart.shipping_address?.id)
+      assignAddressId(validated, "shipping_address", cart.shipping_address?.id)
+    }
+  } catch {
+    // Medusa reports an unknown cart itself. Skipping the id leaves the
+    // update on the path it already had.
+  }
+}
+
+async function validateTaxIdOnCartUpdate(
   req: MedusaRequest,
   res: MedusaResponse,
   next: MedusaNextFunction
@@ -40,6 +118,7 @@ function validateTaxIdOnCartUpdate(
     return
   }
 
+  await reuseStoredAddressIds(req)
   next()
 }
 

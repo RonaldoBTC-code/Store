@@ -142,6 +142,14 @@ describe("abandoned cart invoice-id retention", () => {
     const companyOnly = row("company-only", { days: 40, tax: false })
     companyOnly.billing_address.company = "Solo Nombre"
     expect(cartStillHoldsInvoiceId(companyOnly, NOW)).toBe(true)
+    const emptied = row("emptied", { days: 40, tax: true })
+    emptied.billing_address.company = ""
+    emptied.billing_address.metadata = {
+      tax_id: "",
+      tax_id_type: "   ",
+      note: "keep",
+    }
+    expect(cartStillHoldsInvoiceId(emptied, NOW)).toBe(false)
   })
 
   it("clears a non-empty company when the cart has no invoice id", async () => {
