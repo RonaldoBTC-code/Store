@@ -12,8 +12,11 @@ import { Client, type ClientConfig } from "pg"
  */
 export const ECUADOR_SETUP_LOCK_KEY = 7482910365542101
 
+const LOCK_TIMEOUT_SQL = "SET lock_timeout = '5min'"
 const LOCK_SQL = "SELECT pg_advisory_lock($1::bigint)"
 const UNLOCK_SQL = "SELECT pg_advisory_unlock($1::bigint)"
+const LOCK_BUSY_MESSAGE =
+  "Otro proceso está configurando la tienda Ecuador; reintenta en unos minutos"
 
 type ConfigWithDatabase = {
   projectConfig?: {
@@ -35,6 +38,12 @@ const databaseUrlFrom = (container: MedusaContainer) => {
   return databaseUrl
 }
 
+// TODO: delete sslFor when this branch is rebased onto main after PR #8
+// merges. Non-local hosts currently use rejectUnauthorized: false, which
+// blocks DB and Security review. The lock Client must then use the already
+// cleaned database URL and projectConfig.databaseDriverOptions.connection.ssl
+// from PR #8's helper (store/apps/backend/src/utils/database-ssl.ts). Add a
+// unit test that the Client constructor receives exactly that same ssl value.
 const sslFor = (connectionString: string): ClientConfig["ssl"] => {
   let hostname = ""
   try {
@@ -63,12 +72,25 @@ const lockConnectionError = () =>
     "Could not acquire the Ecuador store setup lock."
   )
 
+const isLockNotAvailable = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  (error as { code?: unknown }).code === "55P03"
+
 /**
  * Holds a session advisory lock on a dedicated connection for the whole
  * callback. A second caller blocks in `pg_advisory_lock` until this
- * connection runs `pg_advisory_unlock`. The connection is closed in the
- * same finally, including when the callback throws. Connection strings are
- * not logged and are not copied into thrown errors.
+ * connection runs `pg_advisory_unlock`. Session `lock_timeout` is 5 minutes
+ * (`SET`, not `SET LOCAL`) so a waiter fails with Postgres `55P03` instead
+ * of waiting forever. The connection is closed in the same finally,
+ * including when the callback throws. Connection strings are not logged
+ * and are not copied into thrown errors.
+ *
+ * `pnpm seed:ec` and `pnpm migrate` must connect directly to Postgres or
+ * through a pooler in session mode. This lock is session-scoped and does
+ * not protect behind PgBouncer or the Supabase pooler in transaction mode
+ * (port 6543).
  */
 export async function withEcuadorSetupLock<T>(
   container: MedusaContainer,
@@ -88,9 +110,16 @@ export async function withEcuadorSetupLock<T>(
   try {
     try {
       await client.connect()
+      await client.query(LOCK_TIMEOUT_SQL)
       await client.query(LOCK_SQL, [String(ECUADOR_SETUP_LOCK_KEY)])
       locked = true
-    } catch {
+    } catch (error) {
+      if (isLockNotAvailable(error)) {
+        throw new MedusaError(
+          MedusaError.Types.UNEXPECTED_STATE,
+          LOCK_BUSY_MESSAGE
+        )
+      }
       throw lockConnectionError()
     }
     return await run()

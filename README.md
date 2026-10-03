@@ -97,6 +97,9 @@ pnpm seed:ec            # safe to re-run: USD, region ec, IVA 15%, shipping
 # Medusa serializes migration scripts with pg_try_advisory_lock.
 # ensureEcuadorStore also locks key 7482910365542101 so seed:ec can run beside
 # another seed:ec or the first migrate. The sales channel has no unique index.
+# seed:ec and migrate must connect directly to Postgres or through a session-mode pooler.
+# The advisory lock is session-scoped and does not protect behind PgBouncer or the
+# Supabase transaction-mode pooler (port 6543).
 # Moving the shipping option leaves products on the old profile without it.
 # fill TODO sku / price / stock in src/data/cap-products.ts
 pnpm seed:caps

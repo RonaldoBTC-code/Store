@@ -8,6 +8,7 @@ import * as coreFlows from "@medusajs/medusa/core-flows"
 import { ECUADOR_SETUP_LOCK_KEY } from "../ecuador-setup-lock"
 import ensureEcuadorStore from "../ensure-ecuador-store"
 
+const LOCK_TIMEOUT_SQL = "SET lock_timeout = '5min'"
 const LOCK_SQL = "SELECT pg_advisory_lock($1::bigint)"
 const UNLOCK_SQL = "SELECT pg_advisory_unlock($1::bigint)"
 
@@ -196,10 +197,11 @@ describe("ensureEcuadorStore preflight", () => {
       MedusaError
     )
 
-    expect(pgState.query).toHaveBeenNthCalledWith(1, LOCK_SQL, [
+    expect(pgState.query).toHaveBeenNthCalledWith(1, LOCK_TIMEOUT_SQL)
+    expect(pgState.query).toHaveBeenNthCalledWith(2, LOCK_SQL, [
       String(ECUADOR_SETUP_LOCK_KEY),
     ])
-    expect(pgState.query).toHaveBeenNthCalledWith(2, UNLOCK_SQL, [
+    expect(pgState.query).toHaveBeenNthCalledWith(3, UNLOCK_SQL, [
       String(ECUADOR_SETUP_LOCK_KEY),
     ])
     expect(pgState.end).toHaveBeenCalledTimes(1)
@@ -207,6 +209,9 @@ describe("ensureEcuadorStore preflight", () => {
       pgState.query.mock.invocationCallOrder[1]
     )
     expect(pgState.query.mock.invocationCallOrder[1]).toBeLessThan(
+      pgState.query.mock.invocationCallOrder[2]
+    )
+    expect(pgState.query.mock.invocationCallOrder[2]).toBeLessThan(
       pgState.end.mock.invocationCallOrder[0]
     )
     expect(ECUADOR_SETUP_LOCK_KEY).toBe(7482910365542101)
@@ -235,6 +240,51 @@ describe("ensureEcuadorStore preflight", () => {
 
     expect(pgState.query).not.toHaveBeenCalled()
     expect(pgState.end).toHaveBeenCalled()
+    expectNoWrites(store)
+  })
+
+  it("sets session lock_timeout before the advisory lock and maps 55P03 to a retry message", async () => {
+    const databaseUrl = "postgres://lock-user:s3cret@db.example.com:5432/store"
+    const store = storeFor({}, databaseUrl)
+    pgState.query.mockImplementation(async (sql: string) => {
+      if (sql === LOCK_SQL) {
+        const error = new Error(
+          `canceling statement due to lock timeout ${databaseUrl}`
+        ) as Error & { code: string }
+        error.code = "55P03"
+        throw error
+      }
+      return { rows: [] }
+    })
+
+    let caught: unknown
+    try {
+      await ensureEcuadorStore({ container: store.container })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(MedusaError)
+    const message = caught instanceof Error ? caught.message : String(caught)
+    expect(message).toBe(
+      "Otro proceso está configurando la tienda Ecuador; reintenta en unos minutos"
+    )
+    expect(message).not.toContain(databaseUrl)
+    expect(message).not.toContain("s3cret")
+    expect(message).not.toContain("db.example.com")
+    expect(message).not.toContain("canceling statement")
+    expect(pgState.query).toHaveBeenNthCalledWith(1, LOCK_TIMEOUT_SQL)
+    expect(pgState.query).toHaveBeenNthCalledWith(2, LOCK_SQL, [
+      String(ECUADOR_SETUP_LOCK_KEY),
+    ])
+    expect(pgState.query.mock.invocationCallOrder[0]).toBeLessThan(
+      pgState.query.mock.invocationCallOrder[1]
+    )
+    expect(pgState.query).not.toHaveBeenCalledWith(
+      UNLOCK_SQL,
+      expect.anything()
+    )
+    expect(pgState.end).toHaveBeenCalledTimes(1)
     expectNoWrites(store)
   })
 
@@ -271,10 +321,11 @@ describe("ensureEcuadorStore preflight", () => {
     )
     expect(store.fulfillment.createFulfillmentSets).toHaveBeenCalled()
     expect(store.link.create).toHaveBeenCalled()
-    expect(pgState.query).toHaveBeenNthCalledWith(1, LOCK_SQL, [
+    expect(pgState.query).toHaveBeenNthCalledWith(1, LOCK_TIMEOUT_SQL)
+    expect(pgState.query).toHaveBeenNthCalledWith(2, LOCK_SQL, [
       String(ECUADOR_SETUP_LOCK_KEY),
     ])
-    expect(pgState.query).toHaveBeenNthCalledWith(2, UNLOCK_SQL, [
+    expect(pgState.query).toHaveBeenNthCalledWith(3, UNLOCK_SQL, [
       String(ECUADOR_SETUP_LOCK_KEY),
     ])
     expect(pgState.end).toHaveBeenCalledTimes(1)
