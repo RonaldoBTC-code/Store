@@ -98,6 +98,19 @@ describe("checkoutAddressesFromForm", () => {
     })
   })
 
+  it("omits metadata when the shopper keeps the stored id", () => {
+    const update = checkoutAddressesFromForm(
+      form({
+        ...shipping,
+        "billing_address.tax_id_keep": "on",
+        "billing_address.tax_id": "",
+      })
+    )
+
+    expect(update.billing_address).not.toHaveProperty("metadata")
+    expect(JSON.stringify(update)).not.toContain("tax_id")
+  })
+
   it("rejects a missing phone and an invalid cédula without returning the number", () => {
     expect(() =>
       checkoutAddressesFromForm(
@@ -116,7 +129,7 @@ describe("checkoutAddressesFromForm", () => {
           "billing_address.tax_id": invalid,
         })
       )
-    ).toThrow("Enter a valid cédula (10 digits).")
+    ).toThrow("La cédula no es válida. Revisa que tenga 10 dígitos.")
 
     try {
       checkoutAddressesFromForm(

@@ -5,7 +5,8 @@ import {
   isValidCedula,
   isValidRuc,
   parseTaxId,
-  taxIdFormDefaults,
+  publicTaxIdState,
+  taxIdReviewLabel,
 } from "./ec-tax-id"
 
 describe("cédula", () => {
@@ -49,7 +50,7 @@ describe("parseTaxId", () => {
 
     const submitted = "1234567890"
     expect(() => parseTaxId("cedula", submitted)).toThrow(
-      "Enter a valid cédula (10 digits)."
+      "La cédula no es válida. Revisa que tenga 10 dígitos."
     )
 
     try {
@@ -69,26 +70,33 @@ describe("parseTaxId", () => {
 
   it("rejects an unknown type", () => {
     expect(() => parseTaxId("passport", "1710034065")).toThrow(
-      "Choose a cédula, RUC, or consumidor final."
+      "Elige cédula, RUC o consumidor final."
     )
   })
 })
 
 describe("form helpers", () => {
-  it("hides the consumidor final number and labels saved ids", () => {
-    expect(
-      taxIdFormDefaults({
-        tax_id_type: "consumidor_final",
-        tax_id: CONSUMIDOR_FINAL_TAX_ID,
-      })
-    ).toEqual({ taxIdType: "consumidor_final", taxId: "" })
+  it("never returns the invoice number", () => {
+    const secret = "secret-value"
+    const identified = {
+      tax_id_set: true,
+      tax_id_kind: "identificado",
+      tax_id: secret,
+    }
 
-    expect(
-      formatTaxIdLabel({ tax_id_type: "ruc", tax_id: "1790085783001" })
-    ).toBe("RUC 1790085783001")
-    expect(formatTaxIdLabel({ tax_id_type: "consumidor_final" })).toBe(
+    expect(publicTaxIdState(identified)).toEqual({
+      taxIdSet: true,
+      taxIdKind: "identificado",
+    })
+    expect(formatTaxIdLabel(identified)).toBe("Cédula ingresada")
+    expect(taxIdReviewLabel(identified)).toBe("Cédula: ingresada")
+    expect(formatTaxIdLabel({ tax_id_kind: "consumidor_final" })).toBe(
       "Consumidor final"
     )
+    expect(taxIdReviewLabel({ tax_id_kind: "consumidor_final" })).toBe(
+      "Consumidor final"
+    )
+    expect(JSON.stringify(publicTaxIdState(identified))).not.toContain(secret)
     expect(formatTaxIdLabel(null)).toBeNull()
   })
 })

@@ -64,17 +64,20 @@ export function checkoutAddressesFromForm(
     "Shipping"
   )
   const sameAsBilling = formData.get("same_as_billing") === "on"
-  const taxId = parseTaxId(
-    field(formData, "billing_address.tax_id_type"),
-    field(formData, "billing_address.tax_id")
-  )
+  const keepTaxId = formData.get("billing_address.tax_id_keep") === "on"
+  const taxId = keepTaxId
+    ? null
+    : parseTaxId(
+        field(formData, "billing_address.tax_id_type"),
+        field(formData, "billing_address.tax_id")
+      )
 
-  const billingAddress = sameAsBilling
-    ? { ...shippingAddress, metadata: taxId }
-    : {
-        ...addressFromFields(formData, "billing_address", "Billing"),
-        metadata: taxId,
-      }
+  const billingCore = sameAsBilling
+    ? shippingAddress
+    : addressFromFields(formData, "billing_address", "Billing")
+  const billingAddress = taxId
+    ? { ...billingCore, metadata: taxId }
+    : billingCore
 
   return {
     shipping_address: shippingAddress,

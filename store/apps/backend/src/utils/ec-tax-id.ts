@@ -11,7 +11,7 @@ export type TaxIdType = (typeof TAX_ID_TYPES)[number]
 export const CONSUMIDOR_FINAL_TAX_ID = "9999999999999"
 
 export const TAX_ID_REQUIRED_MESSAGE =
-  "A valid cédula, RUC, or consumidor final is required."
+  "Ingresa una cédula, un RUC o elige consumidor final."
 
 export type TaxIdMetadata = {
   tax_id: string
@@ -128,17 +128,17 @@ function parseTaxId(typeRaw: string, idRaw: string): TaxIdMetadata {
   }
 
   if (type !== "cedula" && type !== "ruc") {
-    throw new Error(TAX_ID_REQUIRED_MESSAGE)
+    throw new Error("Elige cédula, RUC o consumidor final.")
   }
 
   const taxId = normalizeTaxId(idRaw)
 
   if (type === "cedula" && !isValidCedula(taxId)) {
-    throw new Error("Enter a valid cédula (10 digits).")
+    throw new Error("La cédula no es válida. Revisa que tenga 10 dígitos.")
   }
 
   if (type === "ruc" && !isValidRuc(taxId)) {
-    throw new Error("Enter a valid RUC (13 digits).")
+    throw new Error("El RUC no es válido. Revisa que tenga 13 dígitos.")
   }
 
   return { tax_id_type: type, tax_id: taxId }
@@ -212,6 +212,12 @@ export function applyBillingTaxId(body: unknown): string | null {
   const address = asRecord(record.billing_address)
   if (!address) {
     return TAX_ID_REQUIRED_MESSAGE
+  }
+
+  // Omitting metadata leaves the stored invoice id in place. The browser
+  // does not keep the number, so a later address edit can resubmit without it.
+  if (!Object.prototype.hasOwnProperty.call(address, "metadata")) {
+    return null
   }
 
   const normalized = normalizeTaxMetadata(address.metadata)

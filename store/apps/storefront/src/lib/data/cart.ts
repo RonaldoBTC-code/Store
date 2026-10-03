@@ -12,7 +12,6 @@ import {
   getCartId,
   removeCartId,
   setCartId,
-  setStoredTaxId,
 } from "./cookies"
 import { clearStoredCartId, resolveCartId } from "./cart-guards"
 import { checkoutAddressesFromForm } from "./checkout-addresses"
@@ -354,23 +353,7 @@ export async function setAddresses(currentState: unknown, formData: FormData) {
       throw new Error("No form data found when setting addresses")
     }
     await resolveCartId(getCartId)
-    const update = checkoutAddressesFromForm(formData)
-    await updateCart(update)
-    const billing = update.billing_address
-    const metadata =
-      billing && typeof billing === "object" ? billing.metadata : null
-    if (
-      metadata &&
-      typeof metadata.tax_id === "string" &&
-      (metadata.tax_id_type === "cedula" ||
-        metadata.tax_id_type === "ruc" ||
-        metadata.tax_id_type === "consumidor_final")
-    ) {
-      await setStoredTaxId({
-        tax_id: metadata.tax_id,
-        tax_id_type: metadata.tax_id_type,
-      })
-    }
+    await updateCart(checkoutAddressesFromForm(formData))
   } catch (e: any) {
     return e.message
   }

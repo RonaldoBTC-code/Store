@@ -100,6 +100,7 @@ const BillingAddress = ({ cart }: { cart: HttpTypes.StoreCart | null }) => {
         <Input
           label="Phone"
           name="billing_address.phone"
+          type="tel"
           autoComplete="tel"
           value={formData["billing_address.phone"]}
           onChange={handleChange}

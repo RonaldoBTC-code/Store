@@ -118,45 +118,63 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>
 }
 
-export function taxIdFormDefaults(metadata: unknown): {
-  taxIdType: TaxIdType
-  taxId: string
-} {
+export type PublicTaxIdKind = "consumidor_final" | "identificado"
+
+export type PublicTaxIdState = {
+  taxIdSet: boolean
+  taxIdKind: PublicTaxIdKind | null
+}
+
+/**
+ * Reads the non-sensitive flags the store API returns.
+ * The number itself is never copied into the result.
+ */
+export function publicTaxIdState(metadata: unknown): PublicTaxIdState {
   const record = asRecord(metadata)
-  const type = record?.tax_id_type
-  const id = record?.tax_id
-
-  if (type === "consumidor_final") {
-    return { taxIdType: "consumidor_final", taxId: "" }
+  if (!record) {
+    return { taxIdSet: false, taxIdKind: null }
   }
 
-  if ((type === "cedula" || type === "ruc") && typeof id === "string") {
-    return { taxIdType: type, taxId: normalizeTaxId(id) }
+  const kind = record.tax_id_kind
+  const type = record.tax_id_type
+
+  if (kind === "consumidor_final" || type === "consumidor_final") {
+    return { taxIdSet: true, taxIdKind: "consumidor_final" }
   }
 
-  return { taxIdType: "cedula", taxId: "" }
+  const identified =
+    kind === "identificado" ||
+    record.tax_id_set === true ||
+    type === "cedula" ||
+    type === "ruc"
+
+  if (identified) {
+    return { taxIdSet: true, taxIdKind: "identificado" }
+  }
+
+  return { taxIdSet: false, taxIdKind: null }
 }
 
 export function formatTaxIdLabel(metadata: unknown): string | null {
-  const record = asRecord(metadata)
-  if (!record) {
+  const state = publicTaxIdState(metadata)
+  if (!state.taxIdSet) {
     return null
   }
 
-  if (record.tax_id_type === "consumidor_final") {
-    return "Consumidor final"
+  return state.taxIdKind === "consumidor_final"
+    ? "Consumidor final"
+    : "Cédula ingresada"
+}
+
+export function taxIdReviewLabel(metadata: unknown): string | null {
+  const state = publicTaxIdState(metadata)
+  if (!state.taxIdSet) {
+    return null
   }
 
-  if (
-    (record.tax_id_type === "cedula" || record.tax_id_type === "ruc") &&
-    typeof record.tax_id === "string" &&
-    record.tax_id
-  ) {
-    const prefix = record.tax_id_type === "cedula" ? "Cédula" : "RUC"
-    return `${prefix} ${record.tax_id}`
-  }
-
-  return null
+  return state.taxIdKind === "consumidor_final"
+    ? "Consumidor final"
+    : "Cédula: ingresada"
 }
 
 /**
@@ -174,17 +192,17 @@ export function parseTaxId(typeRaw: string, idRaw: string): TaxIdMetadata {
   }
 
   if (type !== "cedula" && type !== "ruc") {
-    throw new Error("Choose a cédula, RUC, or consumidor final.")
+    throw new Error("Elige cédula, RUC o consumidor final.")
   }
 
   const taxId = normalizeTaxId(idRaw)
 
   if (type === "cedula" && !isValidCedula(taxId)) {
-    throw new Error("Enter a valid cédula (10 digits).")
+    throw new Error("La cédula no es válida. Revisa que tenga 10 dígitos.")
   }
 
   if (type === "ruc" && !isValidRuc(taxId)) {
-    throw new Error("Enter a valid RUC (13 digits).")
+    throw new Error("El RUC no es válido. Revisa que tenga 13 dígitos.")
   }
 
   return { tax_id_type: type, tax_id: taxId }

@@ -1,4 +1,4 @@
-import { taxIdFormDefaults, type TaxIdMetadata } from "@lib/util/ec-tax-id"
+import { publicTaxIdState } from "@lib/util/ec-tax-id"
 import { HttpTypes } from "@medusajs/types"
 import { Container } from "@modules/common/components/ui"
 import Checkbox from "@modules/common/components/checkbox"
@@ -14,13 +14,11 @@ const ShippingAddress = ({
   cart,
   checked,
   onChange,
-  taxId,
 }: {
   customer: HttpTypes.StoreCustomer | null
   cart: HttpTypes.StoreCart | null
   checked: boolean
   onChange: () => void
-  taxId: TaxIdMetadata | null
 }) => {
   const [formData, setFormData] = useState<Record<string, string>>({
     "shipping_address.first_name": cart?.shipping_address?.first_name || "",
@@ -35,7 +33,7 @@ const ShippingAddress = ({
     email: cart?.email || "",
   })
 
-  const taxDefaults = taxIdFormDefaults(taxId)
+  const taxState = publicTaxIdState(cart?.billing_address?.metadata)
 
   const countriesInRegion = useMemo(
     () => cart?.region?.countries?.map((c) => c.iso_2),
@@ -213,6 +211,7 @@ const ShippingAddress = ({
         <Input
           label="Phone"
           name="shipping_address.phone"
+          type="tel"
           autoComplete="tel"
           value={formData["shipping_address.phone"]}
           onChange={handleChange}
@@ -221,8 +220,9 @@ const ShippingAddress = ({
         />
       </div>
       <TaxIdField
-        defaultType={taxDefaults.taxIdType}
-        defaultTaxId={taxDefaults.taxId}
+        taxIdSet={taxState.taxIdSet}
+        taxIdKind={taxState.taxIdKind}
+        requireReentry={Boolean(cart?.shipping_address) && !taxState.taxIdSet}
       />
     </>
   )

@@ -1,5 +1,6 @@
 "use client"
 
+import { taxIdReviewLabel } from "@lib/util/ec-tax-id"
 import { Heading, Text, clx } from "@modules/common/components/ui"
 
 import PaymentButton from "../payment-button"
@@ -14,6 +15,8 @@ const Review = ({ cart }: { cart: HttpTypes.StoreCart }) => {
   const paidByGiftcard = !!(
     (cart as unknown as Record<string, unknown>)?.gift_cards && ((cart as unknown as Record<string, unknown>)?.gift_cards as unknown[])?.length > 0 && cart?.total === 0
   )
+
+  const taxIdStatus = taxIdReviewLabel(cart.billing_address?.metadata)
 
   const previousStepsCompleted =
     cart.shipping_address &&
@@ -37,6 +40,11 @@ const Review = ({ cart }: { cart: HttpTypes.StoreCart }) => {
       </div>
       {isOpen && previousStepsCompleted && (
         <>
+          {taxIdStatus && (
+            <Text className="txt-medium text-ui-fg-subtle mb-4" data-testid="review-tax-id-status">
+              {taxIdStatus}
+            </Text>
+          )}
           <div className="flex items-start gap-x-1 w-full mb-6">
             <div className="w-full">
               <Text className="txt-medium-plus text-ui-fg-base mb-1">

@@ -5,7 +5,7 @@ import {
   type MedusaResponse,
 } from "@medusajs/framework/http"
 import { applyBillingTaxId, normalizeTaxMetadata } from "../utils/ec-tax-id"
-import { stripPublicTaxIdentifiers } from "../utils/strip-public-tax-id"
+import { installStoreTaxIdSanitizer } from "../utils/strip-public-tax-id"
 
 const CART_COMPLETION_REJECTION = {
   type: "invalid_data",
@@ -13,18 +13,16 @@ const CART_COMPLETION_REJECTION = {
 } as const
 
 /**
- * Store cart and order routes are unauthenticated: the cart or order id is the
- * capability. `*billing_address` still loads the metadata column, and
- * `req.disallowed` cannot remove JSON keys inside it. Strip the invoice id
- * from the response body. Admin routes are not matched.
+ * Every `/store/*` response is sanitized, including errors and routes that
+ * call `res.send` or `res.end` instead of `res.json`. Admin routes are not
+ * matched, so order billing metadata stays available for SRI invoicing.
  */
 function stripTaxIdFromStoreResponse(
   _req: MedusaRequest,
   res: MedusaResponse,
   next: MedusaNextFunction
 ) {
-  const sendJson = res.json.bind(res)
-  res.json = (body) => sendJson(stripPublicTaxIdentifiers(body))
+  installStoreTaxIdSanitizer(res)
   next()
 }
 
@@ -73,11 +71,7 @@ async function validateTaxIdOnCartComplete(
 export default defineMiddlewares({
   routes: [
     {
-      matcher: "/store/carts*",
-      middlewares: [stripTaxIdFromStoreResponse],
-    },
-    {
-      matcher: "/store/orders*",
+      matcher: /^\/store(?:\/|$)/,
       middlewares: [stripTaxIdFromStoreResponse],
     },
     {
