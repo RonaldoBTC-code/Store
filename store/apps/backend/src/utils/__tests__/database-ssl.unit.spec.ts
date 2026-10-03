@@ -200,6 +200,52 @@ describe("sanitizeDatabaseUrl", () => {
     )
   })
 
+  it("quita SSLMODE en mayúsculas y deja application_name", () => {
+    const sanitized = sanitizeDatabaseUrl(
+      `postgres://${USER}:${PASSWORD}@${HOST}:5432/medusa?SSLMODE=require&application_name=ramoide`
+    )
+
+    expect(sanitized.removedTlsParameters).toEqual(["sslmode"])
+    expect(sanitized.databaseUrl).toBe(
+      `postgres://${USER}:${PASSWORD}@${HOST}:5432/medusa?application_name=ramoide`
+    )
+    expect(sanitized.databaseUrl).not.toContain("SSLMODE")
+  })
+
+  it.each([
+    ["ssl%6Dode", "sslmode"],
+    ["%73slmode", "sslmode"],
+  ])("quita la clave codificada %s", (rawKey, name) => {
+    const sanitized = sanitizeDatabaseUrl(
+      `postgres://${USER}:${PASSWORD}@${HOST}:5432/medusa?${rawKey}=require&application_name=ramoide`
+    )
+
+    expect(sanitized.removedTlsParameters).toEqual([name])
+    expect(sanitized.databaseUrl).toBe(
+      `postgres://${USER}:${PASSWORD}@${HOST}:5432/medusa?application_name=ramoide`
+    )
+    expect(sanitized.databaseUrl).not.toContain(rawKey)
+    expect(sanitized.databaseUrl).not.toContain("require")
+  })
+
+  it.each([
+    "sslcert",
+    "sslkey",
+    "sslrootcert",
+    "uselibpqcompat",
+    "sslnegotiation",
+  ])("quita %s y deja application_name", (parameter) => {
+    const sanitized = sanitizeDatabaseUrl(
+      `postgres://${USER}:${PASSWORD}@${HOST}:5432/medusa?${parameter}=valor-tls&application_name=ramoide`
+    )
+
+    expect(sanitized.removedTlsParameters).toEqual([parameter])
+    expect(sanitized.databaseUrl).toBe(
+      `postgres://${USER}:${PASSWORD}@${HOST}:5432/medusa?application_name=ramoide`
+    )
+    expect(sanitized.databaseUrl).not.toContain("valor-tls")
+  })
+
   it("quita ssl, sslpassword y el resto de parámetros TLS que lee pg", () => {
     const sanitized = sanitizeDatabaseUrl(RAW_URL)
 

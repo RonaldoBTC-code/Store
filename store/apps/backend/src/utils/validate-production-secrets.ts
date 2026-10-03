@@ -76,15 +76,17 @@ export function validateProductionSecrets(env: ProcessEnv): SecretIssue[] {
 
 /**
  * Subcomando de la CLI de Medusa 2.21 (`@medusajs/cli` create-cli).
- * process.argv es [node, script, ...]. Las flags globales booleanas
- * (`--json`, `--verbose`, `--no-color`) pueden ir antes del comando.
- * El primer token que no es flag es el subcomando. `medusa develop`
- * carga esta config en el padre; el hijo que abre el servidor recibe `start`.
+ * process.argv es [binario, script, ...]. Esos dos primeros elementos
+ * nunca son el subcomando, aunque argv venga corto.
+ * Las flags globales booleanas (`--json`, `--verbose`, `--no-color`)
+ * pueden ir antes del comando. El primer token que no es flag, a partir
+ * del tercero, es el subcomando. `medusa develop` carga esta config en
+ * el padre; el hijo que abre el servidor recibe `start`.
  */
 export function medusaCommandFromArgv(
   argv: readonly string[]
 ): string | undefined {
-  const tokens = argv.length >= 2 ? argv.slice(2) : [...argv]
+  const tokens = argv.slice(2)
 
   for (const token of tokens) {
     if (token === "--") {
@@ -123,6 +125,16 @@ export function isExcludedMedusaCommand(
 
 export function unsafeSkipStartupChecks(env: ProcessEnv): boolean {
   return env.UNSAFE_SKIP_STARTUP_CHECKS?.trim().toLowerCase() === "true"
+}
+
+/**
+ * La config se carga más de una vez en el mismo proceso. El aviso de
+ * UNSAFE_SKIP_STARTUP_CHECKS sale una sola vez.
+ */
+let unsafeSkipStartupChecksWarningEmitted = false
+
+export function resetUnsafeSkipStartupChecksWarningForTests(): void {
+  unsafeSkipStartupChecksWarningEmitted = false
 }
 
 export function shouldEnforceStartupSecrets(
@@ -177,7 +189,10 @@ export function enforceStartupSecrets(
   }
 
   if (unsafeSkipStartupChecks(env)) {
-    warn(UNSAFE_SKIP_STARTUP_CHECKS_WARNING)
+    if (!unsafeSkipStartupChecksWarningEmitted) {
+      unsafeSkipStartupChecksWarningEmitted = true
+      warn(UNSAFE_SKIP_STARTUP_CHECKS_WARNING)
+    }
     return
   }
 

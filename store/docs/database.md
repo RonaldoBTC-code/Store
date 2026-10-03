@@ -51,9 +51,9 @@ El TLS queda solo en `DATABASE_SSL` y `DATABASE_CA_CERT`. Un `?sslmode=require` 
 
 Con `NODE_ENV` de producción (`production` o `prod`, da igual mayúsculas y espacios alrededor), el chequeo de secretos corre por defecto. Un comando desconocido, o una invocación sin argumentos, también lo ejecuta. `CI`, `GITHUB_ACTIONS` y el resto de variables de pipeline no lo saltan ni apagan el SSL por defecto.
 
-La lista de excepciones es corta y explícita, tomada de la CLI de Medusa 2.21: `build`, `db:*` (`db:setup`, `db:create`, `db:migrate`, `db:migrate:scripts`, `db:migrate:search`, `db:rollback`, `db:generate`, `db:sync-links`), `exec`, `user` y `plugin:*` (`plugin:build`, `plugin:develop`, `plugin:publish`, `plugin:add`, `plugin:db:generate`). El subcomando es el primer argumento que no es una flag. `medusa exec start` no cuenta como `start`.
+La lista de excepciones es corta y explícita, tomada de la CLI de Medusa 2.21: `build`, `db:*` (`db:setup`, `db:create`, `db:migrate`, `db:migrate:scripts`, `db:migrate:search`, `db:rollback`, `db:generate`, `db:sync-links`), `exec`, `user` y `plugin:*` (`plugin:build`, `plugin:develop`, `plugin:publish`, `plugin:add`, `plugin:db:generate`). En `process.argv` los dos primeros elementos son el binario y el script; no cuentan como subcomando. El subcomando es el primer argumento posterior que no es una flag. `medusa exec start` no cuenta como `start`.
 
-`UNSAFE_SKIP_STARTUP_CHECKS=true` es la única forma de omitir el chequeo de secretos en un comando que sí lo ejecuta. El SSL sigue el valor de `DATABASE_SSL` o el defecto de producción. Al arrancar se escribe una advertencia visible.
+`UNSAFE_SKIP_STARTUP_CHECKS=true` es la única forma de omitir el chequeo de secretos en un comando que sí lo ejecuta. El SSL sigue el valor de `DATABASE_SSL` o el defecto de producción. La advertencia se escribe una sola vez por proceso, aunque Medusa cargue la config más de una vez.
 
 El build del backend tiene que poder completarse sin variables de producción. Migrar y sembrar tampoco exigen los secretos de arranque.
 
@@ -68,6 +68,15 @@ pnpm exec medusa db:migrate
 ```
 
 Antes, confirmar el host de la URL (local, staging o producción). No hace falta `JWT_SECRET` de producción para migrar: el chequeo de secretos no corre en este comando. Sí hace falta red y credencial válidas hacia esa base.
+
+`db:migrate`, `db:sync-links` y `db:rollback` arman la conexión con la config ya cargada, no con el `DATABASE_URL` crudo del entorno. `initializeContainer` lee `medusa-config.ts`. Ahí `databaseUrl` ya no trae parámetros TLS y `databaseDriverOptions.connection.ssl` es el objeto de `DATABASE_SSL` / `DATABASE_CA_CERT`.
+
+- `pg-connection-loader.js` (Medusa 2.21.0, líneas 32-53) toma `projectConfig.databaseUrl` y `projectConfig.databaseDriverOptions` y se los pasa a `createPgConnection`. Ese helper (`create-pg-connection.js`, líneas 12-27) pone `connectionString` y `ssl` juntos.
+- `medusa-app-loader.js` (líneas 74-84) arma `clientUrl` con la cadena que quedó en el cliente Knex, o con `projectConfig.databaseUrl`, y copia `databaseDriverOptions`.
+- `db:migrate` (`commands/db/migrate.js`, líneas 139 y 75-80) y `db:rollback` (`commands/db/rollback.js`, líneas 17 y 32-35) llaman a `runModulesMigrations`. `db:sync-links` (`commands/db/sync-links.js`, líneas 144-146 y 82) usa el mismo loader. `MedusaAppMigrateUp` (`modules-sdk/dist/medusa-app.js`, líneas 85-87 y 465-471) y el planner de links (líneas 427-429) reciben ese `database`.
+- MikroORM 6.6.14 (`@mikro-orm/core/connections/Connection.js`, líneas 58-71) solo saca host, puerto, usuario, base y `schema` de la URL. No copia `sslmode` al cliente. El `ssl` entra por `driverOptions` al mezclar la config de Knex (`@mikro-orm/knex/AbstractSqlConnection.js`, líneas 172-176).
+
+`db:create`, y el primer paso de `db:setup`, no pasan por `databaseDriverOptions`. `commands/db/create.js` línea 130 arranca el contenedor con `skipDbConnection: true`. La línea 41 lee `DATABASE_URL` del archivo `.env`. La línea 67 lo parsea y las líneas 73-78 copian el `ssl` que salga de esa cadena. No hay un punto soportado para inyectar el objeto de `medusa-config`. Recomendación: en el `.env`, quitar de `DATABASE_URL` `ssl`, `sslmode`, `sslcert`, `sslkey`, `sslpassword`, `sslrootcert`, `uselibpqcompat` y `sslnegotiation` antes de `db:create` o `db:setup`. El TLS de esos dos comandos lo decide la URL del archivo, no `DATABASE_SSL`.
 
 En producción, la migración corre como parte del despliegue, contra la base de producción, no desde una laptop.
 

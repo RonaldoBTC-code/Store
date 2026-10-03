@@ -1,6 +1,8 @@
 import {
   enforceStartupSecrets,
   formatStartupSecretError,
+  medusaCommandFromArgv,
+  resetUnsafeSkipStartupChecksWarningForTests,
   shouldEnforceStartupSecrets,
   validateProductionSecrets,
 } from "../validate-production-secrets"
@@ -136,6 +138,7 @@ describe("shouldEnforceStartupSecrets", () => {
         ["node", "cli.js"]
       )
     ).toBe(true)
+    expect(medusaCommandFromArgv(["node"])).toBeUndefined()
     expect(
       shouldEnforceStartupSecrets({ NODE_ENV: "production" }, ["node"])
     ).toBe(true)
@@ -145,6 +148,34 @@ describe("shouldEnforceStartupSecrets", () => {
         ["node", "cli.js", "--json", "start"]
       )
     ).toBe(true)
+  })
+
+  it("no toma el binario ni el script como subcomando", () => {
+    expect(medusaCommandFromArgv(["node"])).toBeUndefined()
+    expect(medusaCommandFromArgv(["node", "medusa"])).toBeUndefined()
+    expect(medusaCommandFromArgv(["node", "medusa", "start"])).toBe("start")
+    expect(medusaCommandFromArgv(["node", "medusa", "exec", "start"])).toBe(
+      "exec"
+    )
+
+    expect(
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production" },
+        ["node", "medusa"]
+      )
+    ).toBe(true)
+    expect(
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production" },
+        ["node", "medusa", "start"]
+      )
+    ).toBe(true)
+    expect(
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production" },
+        ["node", "medusa", "exec", "start"]
+      )
+    ).toBe(false)
   })
 
   it.each([
@@ -232,6 +263,10 @@ describe("shouldEnforceStartupSecrets", () => {
 })
 
 describe("enforceStartupSecrets", () => {
+  beforeEach(() => {
+    resetUnsafeSkipStartupChecksWarningForTests()
+  })
+
   it("falla el arranque con CI=true y NODE_ENV=production sin secretos", () => {
     expect(() =>
       enforceStartupSecrets(
@@ -299,6 +334,25 @@ describe("enforceStartupSecrets", () => {
     expect(message).not.toContain("supersecret")
     expect(message).not.toContain("password")
     expect(message).not.toContain(DATABASE_URL)
+  })
+
+  it("con UNSAFE_SKIP_STARTUP_CHECKS avisa una sola vez por proceso", () => {
+    const warn = jest.fn()
+    const env = {
+      NODE_ENV: "production",
+      UNSAFE_SKIP_STARTUP_CHECKS: "true",
+      JWT_SECRET: "supersecret",
+      COOKIE_SECRET: "password",
+      DATABASE_URL,
+    }
+
+    enforceStartupSecrets(env, startArgv, warn)
+    enforceStartupSecrets(env, ["node", "medusa", "start"], warn)
+
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0][0]).not.toContain(DATABASE_URL)
+    expect(warn.mock.calls[0][0]).not.toContain("supersecret")
+    expect(warn.mock.calls[0][0]).not.toContain("password")
   })
 
   it("un comando desconocido en producción ejecuta el chequeo", () => {
