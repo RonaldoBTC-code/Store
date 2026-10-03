@@ -85,9 +85,15 @@ cd apps/backend
 cp .env.template .env   # set DATABASE_URL
 pnpm migrate            # schema + fresh Ecuador store seed
 pnpm seed:ec            # safe to re-run: USD, region ec, IVA 15%, shipping
-# FIX_EC_ZONES and FIX_EC_SHIPPING_PROFILE are one-time flags.
-# migrate runs on every deploy. Remove them after the fix is applied.
-# In production, every run warns while either flag is still true.
+# FIX_EC_ZONES and FIX_EC_SHIPPING_PROFILE apply only when setup runs:
+# pnpm seed:ec, or the first migrate before initial-data-seed.ts has finished_at.
+# Setting a flag and deploying applies nothing after that script_migrations row is finished.
+# In production, setup warns while either flag is still true.
+# If that script's preflight blocks, finished_at stays unset and migrate keeps failing.
+# Fix the conflict the error names, then run pnpm migrate again.
+# Medusa serializes migration scripts with pg_try_advisory_lock.
+# ensureEcuadorStore also locks key 7482910365542101 so seed:ec can run beside
+# another seed:ec or the first migrate. The sales channel has no unique index.
 # Moving the shipping option leaves products on the old profile without it.
 # fill TODO sku / price / stock in src/data/cap-products.ts
 pnpm seed:caps

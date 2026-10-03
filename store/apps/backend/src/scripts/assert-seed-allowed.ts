@@ -45,6 +45,7 @@ export function assertSeedAllowed(env: SeedEnv = process.env) {
   }
 }
 
+// TODO: unify with PR #8's node-env.ts when this branch is rebased onto main.
 export function isProductionNodeEnv(nodeEnv: string | undefined) {
   if (!nodeEnv?.trim()) {
     return false

@@ -248,7 +248,7 @@ describe("ecuadorShippingProfileWarning", () => {
     ).toBeUndefined()
   })
 
-  it("warns on every production run while a one-time fix flag is set", () => {
+  it("warns whenever setup runs in production with a one-time fix flag", () => {
     const zones = productionFixFlagWarning({
       NODE_ENV: "production",
       FIX_EC_ZONES: "true",
@@ -267,7 +267,9 @@ describe("ecuadorShippingProfileWarning", () => {
     expect(zones).toContain("one-time flags")
     expect(zones).toContain("must be removed")
     expect(profile).toContain("FIX_EC_SHIPPING_PROFILE")
-    expect(profile).toContain("every deploy")
+    expect(profile).toContain("pnpm seed:ec")
+    expect(profile).toContain("first migrate of a fresh database")
+    expect(profile).not.toContain("every deploy")
     expect(both).toContain("FIX_EC_ZONES and FIX_EC_SHIPPING_PROFILE")
     expect(
       productionFixFlagWarning({

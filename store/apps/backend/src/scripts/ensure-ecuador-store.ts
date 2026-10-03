@@ -205,11 +205,14 @@ const isDuplicateLinkError = (error: unknown) => {
  * flat-rate shipping option at 10 USD. Re-running does not create European
  * regions or demo products, and does not duplicate records that already exist.
  *
- * This runs from `medusa db:migrate` and from `pnpm seed:ec`. It is not
- * behind the product-seed guard, so a production migrate can create the
- * base store. Product and demo seeding stay gated separately.
- * `FIX_EC_SHIPPING_PROFILE` is read here as well. It is not covered by the
- * local-host guard. Only the explicit value `true` moves an option.
+ * This runs from `pnpm seed:ec`, and from `medusa db:migrate` only while
+ * `initial-data-seed.ts` has no `script_migrations.finished_at`. It is not
+ * behind the product-seed guard, so that first production migrate can
+ * create the base store. A later migrate skips the script. Product and
+ * demo seeding stay gated separately. `FIX_EC_SHIPPING_PROFILE` is read
+ * here as well. It is not covered by the local-host guard. Only the
+ * explicit value `true` moves an option, and only on a run that actually
+ * executes this setup.
  *
  * Blocking conflicts are read before any workflow runs: a duplicate
  * Default Sales Channel, more than one default shipping profile, a
@@ -218,11 +221,14 @@ const isDuplicateLinkError = (error: unknown) => {
  *
  * The preflight and every write share one Postgres session advisory lock,
  * key 7482910365542101 (`ECUADOR_SETUP_LOCK_KEY`). It is acquired with
- * `pg_advisory_lock` on a dedicated connection. Another replica blocks
- * until `pg_advisory_unlock` runs, then reads the preflight again and
- * keeps the rows that already exist. That connection is closed in the
+ * blocking `pg_advisory_lock` on a dedicated connection. Another caller
+ * waits until `pg_advisory_unlock` runs, then reads the preflight again
+ * and keeps the rows that already exist. That connection is closed in the
  * same finally, including when setup throws. Connection strings are not
- * logged.
+ * logged. Medusa already serializes migration scripts with
+ * `pg_try_advisory_lock` and skips a script another process is running.
+ * This lock covers `pnpm seed:ec` running in parallel with itself or with
+ * that first migrate. The sales channel has no unique index.
  *
  * On a database that already has store defaults, currencies, or a default
  * tax rate, those values are left in place. An existing region keeps its

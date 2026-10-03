@@ -103,6 +103,7 @@ const storeFor = (
       currency_code?: string | null
       countries?: { iso_2?: string | null }[]
     }[]
+    emptyReads?: boolean
   },
   databaseUrl = "postgres://lock@127.0.0.1:5432/ecuador_lock_test"
 ) => {
@@ -115,7 +116,10 @@ const storeFor = (
   const fulfillment = {
     createFulfillmentSets: jest.fn(async () => {
       moduleWrites.push("fulfillment.createFulfillmentSets")
-      return { id: "fset_written" }
+      return {
+        id: "fset_written",
+        service_zones: [{ id: "serzo_written", name: "Ecuador" }],
+      }
     }),
   }
   const query = {
@@ -128,6 +132,9 @@ const storeFor = (
       }
       if (entity === "region") {
         return { data: records.regions ?? [] }
+      }
+      if (records.emptyReads) {
+        return { data: [] }
       }
       moduleWrites.push(`query ${entity}`)
       throw new Error(`unexpected query ${entity}`)
@@ -229,6 +236,48 @@ describe("ensureEcuadorStore preflight", () => {
     expect(pgState.query).not.toHaveBeenCalled()
     expect(pgState.end).toHaveBeenCalled()
     expectNoWrites(store)
+  })
+
+  it("writes after a ready preflight", async () => {
+    const store = storeFor({ emptyReads: true })
+
+    await expect(
+      ensureEcuadorStore({ container: store.container })
+    ).resolves.toBeUndefined()
+
+    const inputs = flows.__run.mock.calls.map(
+      (call) => call[0] as { input?: unknown } | undefined
+    )
+    expect(inputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          input: expect.objectContaining({
+            salesChannelsData: [
+              expect.objectContaining({ name: "Default Sales Channel" }),
+            ],
+          }),
+        }),
+        expect.objectContaining({
+          input: expect.objectContaining({
+            data: [
+              expect.objectContaining({
+                name: "Default Shipping Profile",
+                type: "default",
+              }),
+            ],
+          }),
+        }),
+      ])
+    )
+    expect(store.fulfillment.createFulfillmentSets).toHaveBeenCalled()
+    expect(store.link.create).toHaveBeenCalled()
+    expect(pgState.query).toHaveBeenNthCalledWith(1, LOCK_SQL, [
+      String(ECUADOR_SETUP_LOCK_KEY),
+    ])
+    expect(pgState.query).toHaveBeenNthCalledWith(2, UNLOCK_SQL, [
+      String(ECUADOR_SETUP_LOCK_KEY),
+    ])
+    expect(pgState.end).toHaveBeenCalledTimes(1)
   })
 
   it("writes nothing when more than one Default Sales Channel exists", async () => {

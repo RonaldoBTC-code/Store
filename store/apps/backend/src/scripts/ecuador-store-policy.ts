@@ -360,8 +360,11 @@ export function shouldFixEcuadorShippingProfile(
 }
 
 /**
- * migrate runs this setup on every deploy. A one-time fix flag left set in
- * production is warned about on every run.
+ * Warns whenever this setup runs in production with a one-time fix flag.
+ * `pnpm migrate` does not run the setup on later deploys: Medusa 2.21 skips
+ * `initial-data-seed.ts` after `script_migrations.finished_at` is set. The
+ * flags take effect from `pnpm seed:ec`, or from the first migrate of a
+ * fresh database.
  */
 export function productionFixFlagWarning(
   env: {
@@ -385,7 +388,7 @@ export function productionFixFlagWarning(
 
   const listed = flags.join(" and ")
   const verb = flags.length > 1 ? "are" : "is"
-  return `${listed} ${verb} set while NODE_ENV is production. These are one-time flags and must be removed from the environment once the fix has been applied. migrate runs this setup on every deploy.`
+  return `${listed} ${verb} set while NODE_ENV is production. These are one-time flags and must be removed from the environment once the fix has been applied. They take effect only when this setup runs: pnpm seed:ec, or the first migrate of a fresh database. Setting the flags and deploying does not run this setup again after initial-data-seed.ts has finished.`
 }
 
 /**
