@@ -1,7 +1,9 @@
+import { createSalesChannelsWorkflow } from "@medusajs/medusa/core-flows"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
+import { ECUADOR_SETUP_LOCK_KEY } from "../../src/scripts/ecuador-setup-lock"
 import ensureEcuadorStore from "../../src/scripts/ensure-ecuador-store"
 
-jest.setTimeout(300_000)
+jest.setTimeout(60_000)
 
 const useDatabaseCredentials = () => {
   const raw = process.env.DATABASE_URL
@@ -143,6 +145,47 @@ medusaIntegrationTestRunner({
       expect(serviceZones).toHaveLength(1)
       expect(shippingOptions ?? []).toHaveLength(1)
       expect(ivaRates).toHaveLength(1)
-    })
+    }, 60_000)
+
+    it("releases the advisory lock when setup throws so the next try can take it", async () => {
+      const container = getContainer()
+      await createSalesChannelsWorkflow(container).run({
+        input: {
+          salesChannelsData: [{ name: "Default Sales Channel" }],
+        },
+      })
+
+      await expect(ensureEcuadorStore({ container })).rejects.toThrow(
+        /Refusing to pick one/
+      )
+
+      const pgConnection = container.resolve(
+        ContainerRegistrationKeys.PG_CONNECTION
+      ) as {
+        client: {
+          acquireConnection: () => Promise<{
+            query: (sql: string, params?: unknown[]) => Promise<{
+              rows: { acquired?: boolean; unlocked?: boolean }[]
+            }>
+          }>
+          releaseConnection: (connection: unknown) => Promise<unknown>
+        }
+      }
+      const connection = await pgConnection.client.acquireConnection()
+      try {
+        const locked = await connection.query(
+          "SELECT pg_try_advisory_lock($1::bigint) AS acquired",
+          [String(ECUADOR_SETUP_LOCK_KEY)]
+        )
+        expect(locked.rows[0]?.acquired).toBe(true)
+        const unlocked = await connection.query(
+          "SELECT pg_advisory_unlock($1::bigint) AS unlocked",
+          [String(ECUADOR_SETUP_LOCK_KEY)]
+        )
+        expect(unlocked.rows[0]?.unlocked).toBe(true)
+      } finally {
+        await pgConnection.client.releaseConnection(connection)
+      }
+    }, 60_000)
   },
 })

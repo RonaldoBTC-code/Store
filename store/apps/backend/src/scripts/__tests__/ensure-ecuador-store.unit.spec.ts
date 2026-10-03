@@ -8,31 +8,41 @@ import * as coreFlows from "@medusajs/medusa/core-flows"
 import { ECUADOR_SETUP_LOCK_KEY } from "../ecuador-setup-lock"
 import ensureEcuadorStore from "../ensure-ecuador-store"
 
-const LOCK_TIMEOUT_SQL = "SET lock_timeout = '5min'"
-const RESET_LOCK_TIMEOUT_SQL = "RESET lock_timeout"
-const LOCK_SQL = "SELECT pg_advisory_lock($1::bigint)"
-const UNLOCK_SQL = "SELECT pg_advisory_unlock($1::bigint)"
+const TRY_LOCK_SQL = "SELECT pg_try_advisory_lock($1::bigint) AS acquired"
+const UNLOCK_SQL = "SELECT pg_advisory_unlock($1::bigint) AS unlocked"
 
 type LockConnection = {
   query: jest.Mock
+  __knex__disposed?: unknown
 }
 
 const lockClients: {
   connection: LockConnection
   acquireConnection: jest.Mock
   releaseConnection: jest.Mock
+  destroyRawConnection: jest.Mock
 }[] = []
 
 const installLockClient = () => {
   const connection: LockConnection = {
-    query: jest.fn(async () => ({ rows: [] })),
+    query: jest.fn(async (sql: string) => {
+      if (sql === TRY_LOCK_SQL) {
+        return { rows: [{ acquired: true }] }
+      }
+      if (sql === UNLOCK_SQL) {
+        return { rows: [{ unlocked: true }] }
+      }
+      return { rows: [] }
+    }),
   }
   const acquireConnection = jest.fn(async () => connection)
   const releaseConnection = jest.fn(async () => undefined)
+  const destroyRawConnection = jest.fn(async () => undefined)
   lockClients.splice(0, lockClients.length, {
     connection,
     acquireConnection,
     releaseConnection,
+    destroyRawConnection,
   })
   return lockClients[0]
 }
@@ -155,6 +165,7 @@ const storeFor = (
           client: {
             acquireConnection: current.acquireConnection,
             releaseConnection: current.releaseConnection,
+            destroyRawConnection: current.destroyRawConnection,
           },
         }
       }
@@ -201,25 +212,22 @@ describe("ensureEcuadorStore preflight", () => {
       MedusaError
     )
 
-    const { connection, acquireConnection, releaseConnection } = lockClients[0]
+    const { connection, acquireConnection, releaseConnection, destroyRawConnection } =
+      lockClients[0]
     expect(acquireConnection).toHaveBeenCalledTimes(1)
-    expect(connection.query).toHaveBeenNthCalledWith(1, LOCK_TIMEOUT_SQL)
-    expect(connection.query).toHaveBeenNthCalledWith(2, LOCK_SQL, [
+    expect(connection.query).toHaveBeenNthCalledWith(1, TRY_LOCK_SQL, [
       String(ECUADOR_SETUP_LOCK_KEY),
     ])
-    expect(connection.query).toHaveBeenNthCalledWith(3, UNLOCK_SQL, [
+    expect(connection.query).toHaveBeenNthCalledWith(2, UNLOCK_SQL, [
       String(ECUADOR_SETUP_LOCK_KEY),
     ])
-    expect(connection.query).toHaveBeenNthCalledWith(4, RESET_LOCK_TIMEOUT_SQL)
     expect(releaseConnection).toHaveBeenCalledTimes(1)
     expect(releaseConnection).toHaveBeenCalledWith(connection)
+    expect(destroyRawConnection).not.toHaveBeenCalled()
     expect(connection.query.mock.invocationCallOrder[0]).toBeLessThan(
       connection.query.mock.invocationCallOrder[1]
     )
-    expect(connection.query.mock.invocationCallOrder[2]).toBeLessThan(
-      connection.query.mock.invocationCallOrder[3]
-    )
-    expect(connection.query.mock.invocationCallOrder[3]).toBeLessThan(
+    expect(connection.query.mock.invocationCallOrder[1]).toBeLessThan(
       releaseConnection.mock.invocationCallOrder[0]
     )
     expect(ECUADOR_SETUP_LOCK_KEY).toBe(7482910365542101)
@@ -297,55 +305,6 @@ describe("ensureEcuadorStore preflight", () => {
     expectNoWrites(store)
   })
 
-  it("sets session lock_timeout before the advisory lock and maps 55P03 to a retry message", async () => {
-    const databaseUrl = "postgres://lock-user:s3cret@db.example.com:5432/store"
-    const store = storeFor({}, databaseUrl)
-    const { connection, acquireConnection, releaseConnection } = lockClients[0]
-    connection.query.mockImplementation(async (sql: string) => {
-      if (sql === LOCK_SQL) {
-        const error = new Error(
-          `canceling statement due to lock timeout ${databaseUrl}`
-        ) as Error & { code: string }
-        error.code = "55P03"
-        throw error
-      }
-      return { rows: [] }
-    })
-
-    let caught: unknown
-    try {
-      await ensureEcuadorStore({ container: store.container })
-    } catch (error) {
-      caught = error
-    }
-
-    expect(caught).toBeInstanceOf(MedusaError)
-    const message = caught instanceof Error ? caught.message : String(caught)
-    expect(message).toBe(
-      "Otro proceso está configurando la tienda Ecuador; reintenta en unos minutos"
-    )
-    expect(message).not.toContain(databaseUrl)
-    expect(message).not.toContain("s3cret")
-    expect(message).not.toContain("db.example.com")
-    expect(message).not.toContain("canceling statement")
-    expect(acquireConnection).toHaveBeenCalledTimes(1)
-    expect(connection.query).toHaveBeenNthCalledWith(1, LOCK_TIMEOUT_SQL)
-    expect(connection.query).toHaveBeenNthCalledWith(2, LOCK_SQL, [
-      String(ECUADOR_SETUP_LOCK_KEY),
-    ])
-    expect(connection.query.mock.invocationCallOrder[0]).toBeLessThan(
-      connection.query.mock.invocationCallOrder[1]
-    )
-    expect(connection.query).toHaveBeenNthCalledWith(3, RESET_LOCK_TIMEOUT_SQL)
-    expect(connection.query).not.toHaveBeenCalledWith(
-      UNLOCK_SQL,
-      expect.anything()
-    )
-    expect(releaseConnection).toHaveBeenCalledTimes(1)
-    expect(releaseConnection).toHaveBeenCalledWith(connection)
-    expectNoWrites(store)
-  })
-
   it("writes after a ready preflight", async () => {
     const store = storeFor({ emptyReads: true })
 
@@ -379,17 +338,16 @@ describe("ensureEcuadorStore preflight", () => {
     )
     expect(store.fulfillment.createFulfillmentSets).toHaveBeenCalled()
     expect(store.link.create).toHaveBeenCalled()
-    const { connection, releaseConnection } = lockClients[0]
-    expect(connection.query).toHaveBeenNthCalledWith(1, LOCK_TIMEOUT_SQL)
-    expect(connection.query).toHaveBeenNthCalledWith(2, LOCK_SQL, [
+    const { connection, releaseConnection, destroyRawConnection } = lockClients[0]
+    expect(connection.query).toHaveBeenNthCalledWith(1, TRY_LOCK_SQL, [
       String(ECUADOR_SETUP_LOCK_KEY),
     ])
-    expect(connection.query).toHaveBeenNthCalledWith(3, UNLOCK_SQL, [
+    expect(connection.query).toHaveBeenNthCalledWith(2, UNLOCK_SQL, [
       String(ECUADOR_SETUP_LOCK_KEY),
     ])
-    expect(connection.query).toHaveBeenNthCalledWith(4, RESET_LOCK_TIMEOUT_SQL)
     expect(releaseConnection).toHaveBeenCalledTimes(1)
     expect(releaseConnection).toHaveBeenCalledWith(connection)
+    expect(destroyRawConnection).not.toHaveBeenCalled()
   })
 
   it("writes nothing when more than one Default Sales Channel exists", async () => {

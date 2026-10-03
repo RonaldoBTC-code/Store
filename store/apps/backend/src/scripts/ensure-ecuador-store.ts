@@ -220,23 +220,24 @@ const isDuplicateLinkError = (error: unknown) => {
  * that cannot be attached. Those stops leave the database unchanged.
  *
  * The preflight and every write share one Postgres session advisory lock,
- * key 7482910365542101 (`ECUADOR_SETUP_LOCK_KEY`). The connection is
- * `acquireConnection()` on `PG_CONNECTION`, the same knex client Medusa
- * 2.21 uses in `run-migration-scripts.ts`, so it inherits the app SSL and
- * CA settings. `SET lock_timeout = '5min'` and blocking `pg_advisory_lock`
- * run on that connection. Another caller waits until `pg_advisory_unlock`
- * on the same connection, then reads the preflight again and keeps the
- * rows that already exist. Postgres `55P03` means the wait exceeded five
- * minutes. The same `finally` unlocks, resets `lock_timeout`, and
- * `releaseConnection`, including when setup throws. Connection strings are
- * not logged. A connection failure includes only a short cause code.
- * Medusa already serializes migration scripts with `pg_try_advisory_lock`
- * and skips a script another process is running. This lock covers
- * `pnpm seed:ec` running in parallel with itself or with that first
- * migrate. The sales channel has no unique index. `pnpm seed:ec` and
- * `pnpm migrate` must connect directly to Postgres or through a pooler in
- * session mode. The lock is session-scoped and does not protect behind
- * PgBouncer or the Supabase pooler in transaction mode (port 6543).
+ * key 7482910365542101 (`ECUADOR_SETUP_LOCK_KEY`). Each attempt borrows a
+ * connection with `acquireConnection()` on `PG_CONNECTION`, the same knex
+ * client Medusa 2.21 uses in `run-migration-scripts.ts`, and runs
+ * `pg_try_advisory_lock`. A false result returns that connection to the
+ * pool, waits a few seconds with jitter, and tries again for up to five
+ * minutes. Only the holder keeps a connection. The holder's `finally`
+ * runs `pg_advisory_unlock` and then `releaseConnection`. A failed unlock
+ * destroys the session instead of leaving the lock on a pooled connection.
+ * Connection strings are not logged. A connection failure includes only a
+ * short cause code. Medusa already serializes migration scripts with
+ * `pg_try_advisory_lock` and skips a script another process is running.
+ * This lock covers `pnpm seed:ec` running in parallel with itself or with
+ * that first migrate. The sales channel has no unique index. `pnpm seed:ec`
+ * and `pnpm migrate` must connect directly to Postgres or through a pooler
+ * in session mode. The lock is session-scoped and does not protect behind
+ * PgBouncer or the Supabase pooler in transaction mode (port 6543). Real
+ * certificate verification for the pool arrives with PR #8. Merge order is
+ * #10, then #8, then #6.
  *
  * On a database that already has store defaults, currencies, or a default
  * tax rate, those values are left in place. An existing region keeps its
