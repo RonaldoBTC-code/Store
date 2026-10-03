@@ -1,0 +1,215 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: store
+
+# Public storefront values only. Not credentials. next.config.js exits
+# unless NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY is set, including for `next lint`.
+env:
+  NEXT_PUBLIC_MEDUSA_BACKEND_URL: http://127.0.0.1:9000
+  NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY: pk_ci_dummy
+  NEXT_PUBLIC_DEFAULT_REGION: ec
+  NEXT_PUBLIC_BASE_URL: http://127.0.0.1:8000
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: store/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: store/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint backend
+        run: pnpm --filter @dtc/backend lint
+
+      # TODO: pre-existing storefront ESLint errors (see the PR description).
+      # Remove continue-on-error once those are fixed in their own PRs.
+      - name: Lint storefront
+        continue-on-error: true
+        run: pnpm --filter @dtc/storefront lint
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: store/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: store/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+  build-backend:
+    name: Build backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: store/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: store/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate runtime secrets
+        run: |
+          jwt_secret="$(openssl rand -hex 32)"
+          cookie_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::${jwt_secret}"
+          echo "::add-mask::${cookie_secret}"
+          {
+            echo "JWT_SECRET=${jwt_secret}"
+            echo "COOKIE_SECRET=${cookie_secret}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build backend
+        run: pnpm --filter @dtc/backend build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+  build-storefront:
+    name: Build storefront
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: store/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: store/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Does not need a running backend: product, collection, and category
+      # generateStaticParams catch fetch failures and return [].
+      - name: Build storefront
+        run: pnpm --filter @dtc/storefront build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+  test-unit:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: store/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: store/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit tests
+        working-directory: store/apps/backend
+        run: pnpm test:unit
+
+  test-integration:
+    name: Backend integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: medusa
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d medusa"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: store/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: store/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate runtime secrets
+        run: |
+          jwt_secret="$(openssl rand -hex 32)"
+          cookie_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::${jwt_secret}"
+          echo "::add-mask::${cookie_secret}"
+          {
+            echo "JWT_SECRET=${jwt_secret}"
+            echo "COOKIE_SECRET=${cookie_secret}"
+          } >> "$GITHUB_ENV"
+
+      - name: Integration tests
+        working-directory: store/apps/backend
+        env:
+          DATABASE_URL: postgres://postgres@127.0.0.1:5432/medusa
+          DATABASE_SSL: "false"
+          STORE_CORS: http://localhost:8000
+          ADMIN_CORS: http://localhost:9000
+          AUTH_CORS: http://localhost:9000
+        run: pnpm test:integration:http

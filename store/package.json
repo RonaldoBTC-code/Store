@@ -10,6 +10,7 @@
     "build": "pnpm -r build",
     "start": "turbo start",
     "lint": "turbo lint",
+    "typecheck": "turbo run typecheck --filter=@dtc/backend --filter=@dtc/storefront",
     "test": "turbo test",
     "backend:seed": "turbo seed --filter=@dtc/backend",
     "backend:dev": "turbo dev --filter=@dtc/backend",
