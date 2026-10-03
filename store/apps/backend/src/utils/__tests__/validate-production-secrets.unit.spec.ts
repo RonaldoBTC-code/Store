@@ -117,6 +117,61 @@ describe("shouldEnforceStartupSecrets", () => {
     ).toBe(true)
   })
 
+  it("corre si el comando es desconocido o no hay argumentos", () => {
+    expect(
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production" },
+        ["node", "cli.js", "lint"]
+      )
+    ).toBe(true)
+    expect(
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production" },
+        ["node", "cli.js", "no-existe"]
+      )
+    ).toBe(true)
+    expect(
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production" },
+        ["node", "cli.js"]
+      )
+    ).toBe(true)
+    expect(
+      shouldEnforceStartupSecrets({ NODE_ENV: "production" }, ["node"])
+    ).toBe(true)
+    expect(
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production" },
+        ["node", "cli.js", "--json", "start"]
+      )
+    ).toBe(true)
+  })
+
+  it.each([
+    ["node", "cli.js", "build"],
+    ["node", "cli.js", "db:setup"],
+    ["node", "cli.js", "db:create"],
+    ["node", "cli.js", "db:migrate"],
+    ["node", "cli.js", "db:migrate:scripts"],
+    ["node", "cli.js", "db:migrate:search"],
+    ["node", "cli.js", "db:rollback"],
+    ["node", "cli.js", "db:generate"],
+    ["node", "cli.js", "db:sync-links"],
+    ["node", "cli.js", "exec", "./src/scripts/seed.ts"],
+    ["node", "cli.js", "exec", "start"],
+    ["node", "cli.js", "user", "-e", "a@b.c", "-p", "x"],
+    ["node", "cli.js", "plugin:build"],
+    ["node", "cli.js", "plugin:develop"],
+    ["node", "cli.js", "plugin:publish"],
+    ["node", "cli.js", "plugin:add"],
+    ["node", "cli.js", "plugin:db:generate"],
+    ["node", "cli.js", "--verbose", "db:migrate"],
+  ])("no corre en la excepción %j", (...argv) => {
+    expect(
+      shouldEnforceStartupSecrets({ NODE_ENV: "production" }, argv)
+    ).toBe(false)
+  })
+
   it.each(["Production", " production ", "prod", "PRODUCTION"])(
     "corre con NODE_ENV=%j",
     (nodeEnv) => {
@@ -244,6 +299,16 @@ describe("enforceStartupSecrets", () => {
     expect(message).not.toContain("supersecret")
     expect(message).not.toContain("password")
     expect(message).not.toContain(DATABASE_URL)
+  })
+
+  it("un comando desconocido en producción ejecuta el chequeo", () => {
+    expect(() =>
+      enforceStartupSecrets(
+        { NODE_ENV: "production" },
+        ["node", "cli.js", "lint"],
+        jest.fn()
+      )
+    ).toThrow(/JWT_SECRET/)
   })
 
   it("no avisa ni falla durante medusa build", () => {

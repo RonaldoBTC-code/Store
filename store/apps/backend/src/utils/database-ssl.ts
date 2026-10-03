@@ -28,13 +28,35 @@ const SSL_DISABLED = new Set([
   "disabled",
 ])
 
-const SSL_ENABLED = new Set([
-  "1",
-  "true",
-  "on",
-  "require",
-  "verify-full",
-])
+/**
+ * Parámetros de TLS que `pg` y `pg-connection-string` leen de la query.
+ * Lockfile: pg 8.20.0 (Knex/MikroORM, el que abre la conexión) y pg 8.23.0;
+ * pg-connection-string 2.14.0 (el que resuelve pg 8.20) y 2.6.2.
+ *
+ * `ConnectionParameters` hace Object.assign del parseo de la URL encima
+ * de `ssl`. Con eso, `sslmode=no-verify` deja `rejectUnauthorized: false`,
+ * `ssl=0` deja `ssl: false` y `ssl=false` reemplaza el objeto por el
+ * string "false". `sslnegotiation=direct` fuerza `ssl: true`.
+ * `uselibpqcompat=true` con `sslmode=require` apaga la verificación.
+ * `sslcert`, `sslkey` y `sslrootcert` leen archivos y arman el objeto.
+ * `sslpassword` no cambia el objeto en estas versiones; es parámetro TLS
+ * de libpq y no debe seguir en la URL.
+ */
+export const DATABASE_URL_TLS_PARAMETERS = [
+  "ssl",
+  "sslmode",
+  "sslcert",
+  "sslkey",
+  "sslpassword",
+  "sslrootcert",
+  "uselibpqcompat",
+  "sslnegotiation",
+] as const
+
+const TLS_QUERY_PARAMETERS = new Set<string>(DATABASE_URL_TLS_PARAMETERS)
+
+export const STRIPPED_TLS_PARAMETERS_WARNING =
+  "ADVERTENCIA: se quitaron parámetros TLS de DATABASE_URL. El SSL lo deciden DATABASE_SSL y DATABASE_CA_CERT."
 
 export const PRODUCTION_SSL_DISABLED_WARNING =
   "ADVERTENCIA: DATABASE_SSL=false en producción. La conexión a Postgres no usa SSL."
@@ -101,13 +123,10 @@ export function resolveDatabaseSsl(
     enabled = defaultDatabaseSslEnabled(env)
   } else if (SSL_DISABLED.has(requested)) {
     enabled = false
-  } else if (SSL_ENABLED.has(requested)) {
-    enabled = true
   } else {
-    throw new MedusaError(
-      MedusaError.Types.INVALID_DATA,
-      "DATABASE_SSL tiene un valor no reconocido. Usa true (verificar certificado) o false (sin SSL)."
-    )
+    // require, true, on, verify-full y cualquier otro valor distinto
+    // de un apagado explícito verifican el certificado.
+    enabled = true
   }
 
   if (!enabled) {
@@ -159,6 +178,107 @@ function loadCaCertificate(
 
 function readCaFileFromDisk(filePath: string): string {
   return fs.readFileSync(filePath, "utf8")
+}
+
+export type SanitizedDatabaseUrl = {
+  databaseUrl: string | undefined
+  removedTlsParameters: string[]
+}
+
+/**
+ * Quita de la query los parámetros TLS. El resto de la URL, usuario,
+ * contraseña y parámetros como application_name quedan igual.
+ * No registra la URL.
+ */
+export function sanitizeDatabaseUrl(
+  databaseUrl: string | undefined
+): SanitizedDatabaseUrl {
+  if (databaseUrl === undefined) {
+    return { databaseUrl: undefined, removedTlsParameters: [] }
+  }
+
+  const hashIndex = databaseUrl.indexOf("#")
+  const withoutHash =
+    hashIndex === -1 ? databaseUrl : databaseUrl.slice(0, hashIndex)
+  const hash = hashIndex === -1 ? "" : databaseUrl.slice(hashIndex)
+  const queryIndex = withoutHash.indexOf("?")
+
+  if (queryIndex === -1) {
+    return { databaseUrl, removedTlsParameters: [] }
+  }
+
+  const base = withoutHash.slice(0, queryIndex)
+  const query = withoutHash.slice(queryIndex + 1)
+  const removed: string[] = []
+  const kept: string[] = []
+
+  for (const part of query.split("&")) {
+    if (!part) {
+      continue
+    }
+
+    const eq = part.indexOf("=")
+    const rawKey = eq === -1 ? part : part.slice(0, eq)
+    const key = decodeQueryKey(rawKey)
+
+    if (TLS_QUERY_PARAMETERS.has(key)) {
+      if (!removed.includes(key)) {
+        removed.push(key)
+      }
+      continue
+    }
+
+    kept.push(part)
+  }
+
+  if (removed.length === 0) {
+    return { databaseUrl, removedTlsParameters: [] }
+  }
+
+  const sanitized =
+    kept.length === 0 ? `${base}${hash}` : `${base}?${kept.join("&")}${hash}`
+
+  return { databaseUrl: sanitized, removedTlsParameters: removed }
+}
+
+export function strippedTlsParametersWarning(
+  parameters: readonly string[]
+): string {
+  return `${STRIPPED_TLS_PARAMETERS_WARNING} Parámetros: ${parameters.join(", ")}.`
+}
+
+export type DatabaseConnectionConfig = {
+  databaseUrl: string | undefined
+  ssl: DatabaseSslConfig
+}
+
+/**
+ * URL sin parámetros TLS y objeto ssl para el driver.
+ * `ssl` nunca queda undefined: pg solo lee PGSSLMODE en ese caso.
+ */
+export function resolveDatabaseConnection(
+  env: ProcessEnv,
+  warn: (message: string) => void = writeWarning,
+  readCaFile: (filePath: string) => string = readCaFileFromDisk
+): DatabaseConnectionConfig {
+  const sanitized = sanitizeDatabaseUrl(env.DATABASE_URL)
+
+  if (sanitized.removedTlsParameters.length > 0) {
+    warn(strippedTlsParametersWarning(sanitized.removedTlsParameters))
+  }
+
+  return {
+    databaseUrl: sanitized.databaseUrl,
+    ssl: resolveDatabaseSsl(env, readCaFile),
+  }
+}
+
+function decodeQueryKey(rawKey: string): string {
+  try {
+    return decodeURIComponent(rawKey.replace(/\+/g, " ")).trim().toLowerCase()
+  } catch {
+    return rawKey.trim().toLowerCase()
+  }
 }
 
 function writeWarning(message: string): void {

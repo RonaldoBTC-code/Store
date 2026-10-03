@@ -75,11 +75,50 @@ export function validateProductionSecrets(env: ProcessEnv): SecretIssue[] {
 }
 
 /**
- * medusa start y medusa develop (el hijo de develop también recibe "start").
- * build, db:migrate y medusa exec no entran.
+ * Subcomando de la CLI de Medusa 2.21 (`@medusajs/cli` create-cli).
+ * process.argv es [node, script, ...]. Las flags globales booleanas
+ * (`--json`, `--verbose`, `--no-color`) pueden ir antes del comando.
+ * El primer token que no es flag es el subcomando. `medusa develop`
+ * carga esta config en el padre; el hijo que abre el servidor recibe `start`.
  */
-export function isMedusaServerCommand(argv: readonly string[]): boolean {
-  return argv.some((arg) => arg === "start" || arg === "develop")
+export function medusaCommandFromArgv(
+  argv: readonly string[]
+): string | undefined {
+  const tokens = argv.length >= 2 ? argv.slice(2) : [...argv]
+
+  for (const token of tokens) {
+    if (token === "--") {
+      return undefined
+    }
+    if (token.startsWith("-")) {
+      continue
+    }
+    return token
+  }
+
+  return undefined
+}
+
+/**
+ * Excepciones explícitas. Cualquier otro comando, uno desconocido,
+ * o una invocación sin argumentos, no entra aquí.
+ * CLI 2.21: build, db:setup, db:create, db:migrate, db:migrate:scripts,
+ * db:migrate:search, db:rollback, db:generate, db:sync-links, exec, user,
+ * plugin:db:generate, plugin:build, plugin:develop, plugin:publish, plugin:add.
+ */
+export function isExcludedMedusaCommand(
+  command: string | undefined
+): boolean {
+  if (!command) {
+    return false
+  }
+  if (command === "build" || command === "exec" || command === "user") {
+    return true
+  }
+  if (command.startsWith("db:") || command.startsWith("plugin:")) {
+    return true
+  }
+  return false
 }
 
 export function unsafeSkipStartupChecks(env: ProcessEnv): boolean {
@@ -93,7 +132,7 @@ export function shouldEnforceStartupSecrets(
   if (!isProductionEnv(env.NODE_ENV)) {
     return false
   }
-  if (!isMedusaServerCommand(argv)) {
+  if (isExcludedMedusaCommand(medusaCommandFromArgv(argv))) {
     return false
   }
   if (unsafeSkipStartupChecks(env)) {
@@ -130,7 +169,10 @@ export function enforceStartupSecrets(
   argv: readonly string[],
   warn: (message: string) => void = writeWarning
 ): void {
-  if (!isProductionEnv(env.NODE_ENV) || !isMedusaServerCommand(argv)) {
+  if (!isProductionEnv(env.NODE_ENV)) {
+    return
+  }
+  if (isExcludedMedusaCommand(medusaCommandFromArgv(argv))) {
     return
   }
 

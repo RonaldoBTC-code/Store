@@ -21,9 +21,9 @@ Plantilla: `store/apps/backend/.env.template`. Copiar a `.env` (no se versiona) 
 
 | Variable | Uso |
 | --- | --- |
-| `DATABASE_URL` | Conexión de Medusa a Postgres. Obligatoria para arrancar en producción. |
-| `DATABASE_SSL` | `false` sin SSL. `true` con SSL y verificación de certificado. Vacía: apagado fuera de producción; encendido con verificación si `NODE_ENV` es producción. `CI` no cambia el defecto. |
-| `DATABASE_CA_CERT` | Opcional. PEM (saltos de línea como `\n`) o ruta a un PEM, cuando el proveedor trae un CA propio. Solo se usa si SSL está encendido. |
+| `DATABASE_URL` | Conexión de Medusa a Postgres. Obligatoria para arrancar en producción. Los parámetros TLS de la query se quitan antes de pasarla al driver. |
+| `DATABASE_SSL` | Apagado explícito: `false`, `0`, `off`, `no`, `disable`, `disabled`. `require` y cualquier otro valor verifican el certificado. Vacía: apagado fuera de producción; encendido con verificación si `NODE_ENV` es producción. `CI` no cambia el defecto. |
+| `DATABASE_CA_CERT` | Opcional. PEM (saltos de línea como `\n`) o ruta a un PEM, cuando el proveedor trae un CA propio. Solo se usa si SSL está encendido. No va en la URL. |
 | `JWT_SECRET` | Firma de JWT. En producción no puede faltar, medir menos de 32 caracteres, ser un valor de plantilla ni coincidir con `COOKIE_SECRET`. |
 | `COOKIE_SECRET` | Firma de cookies. La misma regla, y un valor distinto del de `JWT_SECRET`. |
 | `NODE_ENV` | Producción si, recortado y en minúsculas, es `production` o `prod`. Ahí se exige el chequeo de secretos al arrancar y el SSL por defecto. |
@@ -37,19 +37,27 @@ openssl rand -base64 48
 
 Quedan rechazados, sin distinguir mayúsculas: `supersecret`, `changeme`, `secret`, `password` y el valor vacío de `.env.template`. También se rechazan si los dos secretos son iguales o si alguno tiene menos de 32 caracteres. El mensaje nombra la variable y la regla. No imprime el valor ni `DATABASE_URL`.
 
-En producción, Ramoide configura al menos: `NODE_ENV=production` (o `prod`), `DATABASE_URL` de la base de producción, `DATABASE_SSL=true` (o vacío, que en ese caso enciende la verificación), `DATABASE_CA_CERT` si el CA no es uno de los que ya confía Node, y `JWT_SECRET` y `COOKIE_SECRET` recién generados. No definir `UNSAFE_SKIP_STARTUP_CHECKS`.
+En producción, Ramoide configura al menos: `NODE_ENV=production` (o `prod`), `DATABASE_URL` de la base de producción, `DATABASE_SSL=require` (o vacío, que en ese caso enciende la verificación; cualquier valor distinto de un apagado explícito también la enciende), `DATABASE_CA_CERT` si el CA no es uno de los que ya confía Node, y `JWT_SECRET` y `COOKIE_SECRET` recién generados. No definir `UNSAFE_SKIP_STARTUP_CHECKS`.
 
-El código no vuelve a usar `rejectUnauthorized: false`. Si SSL está apagado, la conexión va sin SSL. Si está encendido, el certificado se verifica. Con `DATABASE_SSL=false` en producción el proceso sigue y escribe una advertencia, también sin la URL.
+El código no usa `rejectUnauthorized: false`. Si SSL está apagado, la conexión va sin SSL. Si está encendido, el certificado se verifica. Con `DATABASE_SSL=false` en producción el proceso sigue y escribe una advertencia, también sin la URL.
+
+`pg` 8.20.0 (el cliente que abre la conexión, vía Knex y MikroORM) y `pg` 8.23.0 mezclan la query de `DATABASE_URL` encima del objeto `ssl`. `pg-connection-string` 2.14.0, que es el que resuelve ese `pg` 8.20, interpreta `ssl`, `sslmode`, `sslcert`, `sslkey`, `sslrootcert`, `uselibpqcompat` y `sslnegotiation`. `ssl=0` deja el SSL en falso. `ssl=false` reemplaza el objeto por el string `"false"`. `sslmode=no-verify` deja `rejectUnauthorized: false`. `sslnegotiation=direct` fuerza SSL encendido. También se quita `sslpassword`: en estas versiones el parser no lo aplica al objeto, y no debe seguir en la URL. El resto de la cadena se conserva, incluidos usuario, contraseña y parámetros que no son TLS (`application_name`, por ejemplo). Si se quitó alguno, el proceso escribe una advertencia con los nombres. No escribe la URL, el usuario ni la contraseña.
+
+El TLS queda solo en `DATABASE_SSL` y `DATABASE_CA_CERT`. Un `?sslmode=require` que traiga el proveedor se ignora. Si ese proveedor usa un CA propio, el PEM va en `DATABASE_CA_CERT`.
+
+`PGSSLMODE` lo lee `pg` solo cuando `ssl` no viene en la config. Aquí `ssl` siempre está definido: `false`, o `{ rejectUnauthorized: true }` con el CA si hace falta. `PGSSLMODE=disable` no reemplaza ese objeto ni apaga la verificación. No se borra la variable del entorno.
 
 ## Arranque
 
-Con `NODE_ENV` de producción (`production` o `prod`, da igual mayúsculas y espacios alrededor), `medusa start` y `medusa develop` se niegan a arrancar si falla el chequeo de secretos o falta `DATABASE_URL`. `CI`, `GITHUB_ACTIONS` y el resto de variables de pipeline no saltan ese chequeo ni apagan el SSL por defecto.
+Con `NODE_ENV` de producción (`production` o `prod`, da igual mayúsculas y espacios alrededor), el chequeo de secretos corre por defecto. Un comando desconocido, o una invocación sin argumentos, también lo ejecuta. `CI`, `GITHUB_ACTIONS` y el resto de variables de pipeline no lo saltan ni apagan el SSL por defecto.
 
-`UNSAFE_SKIP_STARTUP_CHECKS=true` es la única forma de omitir el chequeo de secretos. El SSL sigue el valor de `DATABASE_SSL` o el defecto de producción. Al arrancar se escribe una advertencia visible.
+La lista de excepciones es corta y explícita, tomada de la CLI de Medusa 2.21: `build`, `db:*` (`db:setup`, `db:create`, `db:migrate`, `db:migrate:scripts`, `db:migrate:search`, `db:rollback`, `db:generate`, `db:sync-links`), `exec`, `user` y `plugin:*` (`plugin:build`, `plugin:develop`, `plugin:publish`, `plugin:add`, `plugin:db:generate`). El subcomando es el primer argumento que no es una flag. `medusa exec start` no cuenta como `start`.
 
-Ese chequeo no corre en `medusa build`, ni en `medusa db:migrate`, ni en scripts de seed. El build del backend tiene que poder completarse sin variables de producción.
+`UNSAFE_SKIP_STARTUP_CHECKS=true` es la única forma de omitir el chequeo de secretos en un comando que sí lo ejecuta. El SSL sigue el valor de `DATABASE_SSL` o el defecto de producción. Al arrancar se escribe una advertencia visible.
 
-`register()` en `instrumentation.ts` repite el mismo chequeo. Medusa solo lo invoca al crear el servidor.
+El build del backend tiene que poder completarse sin variables de producción. Migrar y sembrar tampoco exigen los secretos de arranque.
+
+`register()` en `instrumentation.ts` repite el mismo chequeo cuando Medusa lo invoca.
 
 ## Migraciones
 
