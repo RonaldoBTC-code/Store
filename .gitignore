@@ -7,10 +7,15 @@
 **/build/
 **/.cache/
 
-# Secrets and local env
-**/.env
-**/.env.local
-**/.env.*.local
+# Secretos y entorno local. Las plantillas sí se versionan.
+**/.env*
+!**/.env.template
+!**/.env.example
+
+# Llaves y volcados. Los archivos .sql de migración siguen versionados.
+*.key
+*.dump
+backups/
 
 # Logs and OS
 *.log

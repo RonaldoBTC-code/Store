@@ -1,24 +1,22 @@
-// Uncomment this file to enable instrumentation and observability using OpenTelemetry
-// Refer to the docs for installation instructions: https://docs.medusajs.com/learn/debugging-and-testing/instrumentation
+import { enforceStartupSecrets } from "./src/utils/validate-production-secrets"
 
-// import { registerOtel } from "@medusajs/medusa"
-// // If using an exporter other than Zipkin, require it here.
-// import { ZipkinExporter } from "@opentelemetry/exporter-zipkin"
-
-// // If using an exporter other than Zipkin, initialize it here.
-// const exporter = new ZipkinExporter({
-//   serviceName: 'my-medusa-project',
-// })
-
-// export function register() {
-//   registerOtel({
-//     serviceName: 'medusajs',
-//     // pass exporter
-//     exporter,
-//     instrument: {
-//       http: true,
-//       workflows: true,
-//       query: true
-//     },
-//   })
-// }
+/**
+ * En producción el chequeo corre para el comando en curso, salvo
+ * `build`, `db:*`, `exec`, `user` y `plugin:*`.
+ * CI no lo omite. UNSAFE_SKIP_STARTUP_CHECKS solo omite secretos.
+ *
+ * OpenTelemetry sigue siendo opcional. Para activarlo, ver
+ * https://docs.medusajs.com/learn/debugging-and-testing/instrumentation
+ */
+export function register(): void {
+  try {
+    enforceStartupSecrets(process.env, process.argv)
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Configuración de producción inválida."
+    process.stderr.write(`${message}\n`)
+    process.exit(1)
+  }
+}

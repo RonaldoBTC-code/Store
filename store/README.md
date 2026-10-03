@@ -97,12 +97,14 @@ cd apps/backend
 pnpm medusa db:migrate
 ```
 
-5. Add admin user:
+5. Crea el usuario administrador con tu propio correo y una contraseña que elijas. No uses una contraseña de ejemplo ni la guardes en el repositorio:
 
 ```bash
 cd apps/backend
-pnpm medusa user -e admin@test.com -p supersecret
+pnpm medusa user -e <tu-email> -p <tu-contraseña>
 ```
+
+Operación de la base (SSL, secretos, copias, datos personales y pasarelas): [docs/database.md](docs/database.md).
 
 6. Start Medusa backend:
 
