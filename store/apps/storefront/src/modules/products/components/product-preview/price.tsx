@@ -18,7 +18,7 @@ export default async function PreviewPrice({
         <Text
           className={
             tone === "dark"
-              ? "line-through text-white/35"
+              ? "line-through text-white/75"
               : "line-through text-ui-fg-muted"
           }
           data-testid="original-price"

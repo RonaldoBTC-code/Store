@@ -9,14 +9,13 @@ const EmptyCartMessage = () => {
         level="h1"
         className="flex flex-row items-baseline gap-x-2 font-display text-4xl font-extrabold text-white"
       >
-        Cart
+        Carrito
       </Heading>
-      <Text className="mb-6 mt-4 max-w-[32rem] text-base-regular text-white/70">
-        You don&apos;t have anything in your cart. Let&apos;s change that, use
-        the link below to start browsing our products.
+      <Text className="mb-6 mt-4 max-w-[32rem] text-base-regular text-white/75">
+        El carrito está vacío. Hay gorras esperando.
       </Text>
       <div>
-        <InteractiveLink href="/store">Explore products</InteractiveLink>
+        <InteractiveLink href="/store">Ver gorras</InteractiveLink>
       </div>
     </div>
   )

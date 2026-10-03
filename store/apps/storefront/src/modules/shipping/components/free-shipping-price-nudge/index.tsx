@@ -144,16 +144,16 @@ function FreeShippingInline({
   return (
     <div className="bg-neutral-100 p-2 rounded-lg border">
       <div className="space-y-1.5">
-        <div className="flex justify-between text-xs text-neutral-600">
+        <div className="flex justify-between text-xs text-neutral-800">
           <div>
             {price.target_reached ? (
               <div className="flex items-center gap-1.5">
                 {" "}
                 <CheckCircleSolid className="text-green-500 inline-block" />{" "}
-                Free Shipping unlocked!
+                Envío gratis desbloqueado
               </div>
             ) : (
-              `Unlock Free Shipping`
+              `Desbloquea el envío gratis`
             )}
           </div>
 
@@ -162,14 +162,13 @@ function FreeShippingInline({
               "opacity-0 invisible": price.target_reached,
             })}
           >
-            Only{" "}
+            Te faltan{" "}
             <span className="text-neutral-950">
               {convertToLocale({
                 amount: price.target_remaining,
                 currency_code: cart.currency_code,
               })}
-            </span>{" "}
-            away
+            </span>
           </div>
         </div>
         <div className="flex justify-between gap-1">
@@ -211,8 +210,9 @@ function FreeShippingPopup({
     >
       <div>
         <Button
-          className="rounded-full bg-neutral-900 shadow-none outline-none border-none text-[15px] p-2"
+          className="focus-neon rounded-full bg-neutral-900 shadow-none border-none text-[15px] p-2"
           onClick={() => setIsClosed(true)}
+          aria-label="Cerrar"
         >
           <XMark />
         </Button>
@@ -221,15 +221,15 @@ function FreeShippingPopup({
       <div className="w-[400px] bg-black text-white p-6 rounded-lg ">
         <div className="pb-4">
           <div className="space-y-3">
-            <div className="flex justify-between text-[15px] text-neutral-400">
+            <div className="flex justify-between text-[15px] text-neutral-200">
               <div>
                 {price.target_reached ? (
                   <div className="flex items-center gap-1.5">
                     <CheckCircleSolid className="text-green-500 inline-block" />{" "}
-                    Free Shipping unlocked!
+                    Envío gratis desbloqueado
                   </div>
                 ) : (
-                  `Unlock Free Shipping`
+                  `Desbloquea el envío gratis`
                 )}
               </div>
 
@@ -238,14 +238,13 @@ function FreeShippingPopup({
                   "opacity-0 invisible": price.target_reached,
                 })}
               >
-                Only{" "}
+                Te faltan{" "}
                 <span className="text-white">
                   {convertToLocale({
                     amount: price.target_remaining,
                     currency_code: cart.currency_code,
                   })}
-                </span>{" "}
-                away
+                </span>
               </div>
             </div>
             <div className="flex justify-between gap-1">
@@ -265,17 +264,17 @@ function FreeShippingPopup({
 
         <div className="flex gap-3">
           <LocalizedClientLink
-            className="rounded-2xl bg-transparent shadow-none outline-none border-[1px] border-white text-[15px] py-2.5 px-4"
+            className="focus-neon rounded-2xl bg-transparent border-[1px] border-white text-[15px] py-2.5 px-4"
             href="/cart"
           >
-            View cart
+            Ver carrito
           </LocalizedClientLink>
 
           <LocalizedClientLink
-            className="flex-grow rounded-2xl bg-white text-neutral-950 shadow-none outline-none border-[1px] border-white text-[15px] py-2.5 px-4 text-center"
+            className="focus-neon flex-grow rounded-2xl bg-white text-neutral-950 border-[1px] border-white text-[15px] py-2.5 px-4 text-center"
             href="/store"
           >
-            View products
+            Ver gorras
           </LocalizedClientLink>
         </div>
       </div>

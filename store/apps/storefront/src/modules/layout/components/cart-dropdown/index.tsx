@@ -81,7 +81,7 @@ const CartDropdown = ({
         className="flex h-full items-center transition hover:text-neon"
         href="/cart"
         data-testid="nav-cart-link"
-      >{`Cart (${totalItems})`}</LocalizedClientLink>
+      >{`Carrito (${totalItems})`}</LocalizedClientLink>
       <Popover className="relative h-0">
         <Transition
           show={cartDropdownOpen}
@@ -99,7 +99,7 @@ const CartDropdown = ({
             data-testid="nav-cart-dropdown"
           >
             <div className="p-4 flex items-center justify-center">
-              <h3 className="text-large-semi">Cart</h3>
+              <h3 className="text-large-semi">Carrito</h3>
             </div>
             {cartState && cartState.items?.length ? (
               <>
@@ -148,7 +148,7 @@ const CartDropdown = ({
                                   data-testid="cart-item-quantity"
                                   data-value={item.quantity}
                                 >
-                                  Quantity: {item.quantity}
+                                  Cantidad: {item.quantity}
                                 </span>
                               </div>
                               <div className="flex justify-end">
@@ -165,7 +165,7 @@ const CartDropdown = ({
                             className="mt-1"
                             data-testid="cart-item-remove-button"
                           >
-                            Remove
+                            Quitar
                           </DeleteButton>
                         </div>
                       </div>
@@ -175,7 +175,7 @@ const CartDropdown = ({
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-white">
                       Subtotal{" "}
-                      <span className="font-normal">(excl. taxes)</span>
+                      <span className="font-normal">(sin impuestos)</span>
                     </span>
                     <span
                       className="text-large-semi"
@@ -194,7 +194,7 @@ const CartDropdown = ({
                     data-testid="go-to-cart-button"
                     onClick={close}
                   >
-                    Go to cart
+                    Ir al carrito
                   </LocalizedClientLink>
                 </div>
               </>
@@ -204,15 +204,15 @@ const CartDropdown = ({
                   <div className="bg-gray-900 text-small-regular flex items-center justify-center w-6 h-6 rounded-full text-white">
                     <span>0</span>
                   </div>
-                  <span>Your shopping bag is empty.</span>
+                  <span>El carrito está vacío.</span>
                   <div>
                     <LocalizedClientLink
                       href="/store"
                       className="editorial-hud inline-flex h-10 items-center justify-center rounded-full border border-neon/60 bg-neon/10 px-4 text-neon hover:bg-neon hover:text-ink-950"
                       onClick={close}
                     >
-                      <span className="sr-only">Go to all products page</span>
-                      Explore products
+                      <span className="sr-only">Ir a la tienda</span>
+                      Ver gorras
                     </LocalizedClientLink>
                   </div>
                 </div>

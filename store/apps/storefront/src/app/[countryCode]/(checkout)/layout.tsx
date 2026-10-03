@@ -16,8 +16,8 @@ export default function CheckoutLayout({
             data-testid="back-to-cart-link"
           >
             <ChevronDown className="rotate-90" size={16} />
-            <span className="mt-px hidden small:block">Back to cart</span>
-            <span className="mt-px block small:hidden">Back</span>
+            <span className="mt-px hidden small:block">Volver al carrito</span>
+            <span className="mt-px block small:hidden">Volver</span>
           </LocalizedClientLink>
           <LocalizedClientLink
             href="/"

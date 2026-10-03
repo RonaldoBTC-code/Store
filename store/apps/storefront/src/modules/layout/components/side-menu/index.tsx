@@ -11,10 +11,10 @@ import CountrySelect from "../country-select"
 import { Locale } from "@lib/data/locales"
 
 const SideMenuItems = {
-  HOME: "/",
-  STORE: "/store",
-  ACCOUNT: "/account",
-  CART: "/cart",
+  HOME: { href: "/", label: "Inicio" },
+  STORE: { href: "/store", label: "Tienda" },
+  ACCOUNT: { href: "/account", label: "Cuenta" },
+  CART: { href: "/cart", label: "Carrito" },
 } as const
 
 type SideMenuProps = {
@@ -35,9 +35,9 @@ const SideMenu = ({ regions }: SideMenuProps) => {
               <div className="relative flex h-full">
                 <Popover.Button
                   data-testid="nav-menu-button"
-                  className="relative flex h-full items-center text-white transition-colors duration-200 ease-out hover:text-neon focus:outline-none"
+                  className="focus-neon relative flex h-full items-center text-white transition-colors duration-200 ease-out hover:text-neon"
                 >
-                  Menu
+                  Menú
                 </Popover.Button>
               </div>
 
@@ -61,32 +61,32 @@ const SideMenu = ({ regions }: SideMenuProps) => {
                   />
                   <div className="relative z-10 flex h-full flex-col px-6 py-6 small:px-12">
                     <div className="flex items-center justify-between">
-                      <p className="editorial-hud text-neon">Menu</p>
+                      <p className="editorial-hud text-neon">Menú</p>
                       <button
                         type="button"
                         data-testid="close-menu-button"
                         onClick={close}
-                        className="text-white transition-colors hover:text-neon"
-                        aria-label="Close menu"
+                        className="focus-neon text-white transition-colors hover:text-neon"
+                        aria-label="Cerrar menú"
                       >
                         <XMark />
                       </button>
                     </div>
 
                     <nav
-                      aria-label="Primary"
+                      aria-label="Principal"
                       className="flex flex-1 flex-col justify-center"
                     >
                       <ul className="flex flex-col gap-4 small:gap-6">
-                        {Object.entries(SideMenuItems).map(([name, href]) => (
+                        {Object.entries(SideMenuItems).map(([name, item]) => (
                           <li key={name}>
                             <LocalizedClientLink
-                              href={href}
+                              href={item.href}
                               className="font-display text-5xl font-extrabold uppercase leading-none tracking-tight text-white transition-colors hover:text-neon small:text-7xl"
                               onClick={close}
                               data-testid={`${name.toLowerCase()}-link`}
                             >
-                              {name}
+                              {item.label}
                             </LocalizedClientLink>
                           </li>
                         ))}
@@ -107,8 +107,8 @@ const SideMenu = ({ regions }: SideMenuProps) => {
                         </div>
                       )}
                       <Text className="txt-compact-small text-white/80">
-                        © {new Date().getFullYear()} Gato Gang. All rights
-                        reserved.
+                        © {new Date().getFullYear()} Gato Gang. Todos los
+                        derechos reservados.
                       </Text>
                     </div>
                   </div>

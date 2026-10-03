@@ -29,9 +29,13 @@ const BillingAddress = ({ cart }: { cart: HttpTypes.StoreCart | null }) => {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-4">
+      {/*
+        Misma grilla que el envío. Cédula/RUC se inserta aquí, en metadata,
+        desde el otro PR. No agregar el campo ni cambiar required en este.
+      */}
+      <div className="grid grid-cols-1 gap-4 small:grid-cols-2">
         <Input
-          label="First name"
+          label="Nombre"
           name="billing_address.first_name"
           autoComplete="given-name"
           value={formData["billing_address.first_name"]}
@@ -40,7 +44,7 @@ const BillingAddress = ({ cart }: { cart: HttpTypes.StoreCart | null }) => {
           data-testid="billing-first-name-input"
         />
         <Input
-          label="Last name"
+          label="Apellido"
           name="billing_address.last_name"
           autoComplete="family-name"
           value={formData["billing_address.last_name"]}
@@ -48,25 +52,26 @@ const BillingAddress = ({ cart }: { cart: HttpTypes.StoreCart | null }) => {
           required
           data-testid="billing-last-name-input"
         />
+        <div className="small:col-span-2">
+          <Input
+            label="Dirección"
+            name="billing_address.address_1"
+            autoComplete="address-line1"
+            value={formData["billing_address.address_1"]}
+            onChange={handleChange}
+            required
+            data-testid="billing-address-input"
+          />
+        </div>
         <Input
-          label="Address"
-          name="billing_address.address_1"
-          autoComplete="address-line1"
-          value={formData["billing_address.address_1"]}
+          label="Ciudad"
+          name="billing_address.city"
+          autoComplete="address-level2"
+          value={formData["billing_address.city"]}
           onChange={handleChange}
-          required
-          data-testid="billing-address-input"
         />
         <Input
-          label="Company"
-          name="billing_address.company"
-          value={formData["billing_address.company"]}
-          onChange={handleChange}
-          autoComplete="organization"
-          data-testid="billing-company-input"
-        />
-        <Input
-          label="Postal code"
+          label="Código postal"
           name="billing_address.postal_code"
           autoComplete="postal-code"
           value={formData["billing_address.postal_code"]}
@@ -75,11 +80,12 @@ const BillingAddress = ({ cart }: { cart: HttpTypes.StoreCart | null }) => {
           data-testid="billing-postal-input"
         />
         <Input
-          label="City"
-          name="billing_address.city"
-          autoComplete="address-level2"
-          value={formData["billing_address.city"]}
+          label="Provincia"
+          name="billing_address.province"
+          autoComplete="address-level1"
+          value={formData["billing_address.province"]}
           onChange={handleChange}
+          data-testid="billing-province-input"
         />
         <CountrySelect
           name="billing_address.country_code"
@@ -90,23 +96,23 @@ const BillingAddress = ({ cart }: { cart: HttpTypes.StoreCart | null }) => {
           required
           data-testid="billing-country-select"
         />
-        <Input
-          label="State / Province"
-          name="billing_address.province"
-          autoComplete="address-level1"
-          value={formData["billing_address.province"]}
-          onChange={handleChange}
-          data-testid="billing-province-input"
-        />
-        <Input
-          label="Phone"
-          name="billing_address.phone"
-          autoComplete="tel"
-          value={formData["billing_address.phone"]}
-          onChange={handleChange}
-          data-testid="billing-phone-input"
-        />
+        <div className="small:col-span-2">
+          <Input
+            label="Teléfono"
+            name="billing_address.phone"
+            autoComplete="tel"
+            value={formData["billing_address.phone"]}
+            onChange={handleChange}
+            data-testid="billing-phone-input"
+          />
+        </div>
+        {/* TODO(billing-id): cédula/RUC en metadata de facturación. */}
       </div>
+      <input
+        type="hidden"
+        name="billing_address.company"
+        value={formData["billing_address.company"]}
+      />
     </>
   )
 }

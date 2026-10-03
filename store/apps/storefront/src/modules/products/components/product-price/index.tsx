@@ -28,7 +28,7 @@ export default function ProductPrice({
           "text-neon": selectedPrice.price_type === "sale",
         })}
       >
-        {!variant && "From "}
+        {!variant && "Desde "}
         <span
           data-testid="product-price"
           data-value={selectedPrice.calculated_price_number}
@@ -39,7 +39,7 @@ export default function ProductPrice({
       {selectedPrice.price_type === "sale" && (
         <>
           <p>
-            <span className="text-white/45">Original: </span>
+            <span className="text-white/75">Antes: </span>
             <span
               className="line-through"
               data-testid="original-product-price"

@@ -27,11 +27,11 @@ export default function TransferRequestForm() {
       <div className="grid sm:grid-cols-2 items-center gap-x-8 gap-y-4 w-full">
         <div className="flex flex-col gap-y-1">
           <Heading level="h3" className="!text-sm font-semibold text-neutral-950">
-            Order transfers
+            Transferencias de pedidos
           </Heading>
           <p className="text-small-regular text-neutral-500">
-            Can&apos;t find the order you are looking for?
-            <br /> Connect an order to your account.
+            ¿No encuentras el pedido?
+            <br /> Vincúlalo a tu cuenta.
           </p>
         </div>
         <form
@@ -39,13 +39,18 @@ export default function TransferRequestForm() {
           className="flex flex-col gap-y-1 sm:items-end"
         >
           <div className="flex flex-col gap-y-2 w-full">
-            <Input className="w-full" name="order_id" placeholder="Order ID" />
+            <Input
+              className="w-full"
+              name="order_id"
+              placeholder="Número de pedido"
+              aria-label="Número de pedido"
+            />
             <SubmitButton
               variant="secondary"
               size="small"
               className="w-fit whitespace-nowrap self-end"
             >
-              Request transfer
+              Pedir transferencia
             </SubmitButton>
           </div>
         </form>
@@ -61,16 +66,17 @@ export default function TransferRequestForm() {
             <CheckCircleMiniSolid className="w-4 h-4 text-emerald-500" />
             <div className="flex flex-col gap-y-1">
               <Text className="text-medim-pl text-neutral-950">
-                Transfer for order {state.order?.id} requested
+                Pediste transferir el pedido {state.order?.id}
               </Text>
               <Text className="text-base-regular text-neutral-600">
-                Transfer request email sent to {state.order?.email}
+                Mandamos el correo de la transferencia a {state.order?.email}
               </Text>
             </div>
           </div>
           <IconButton
             className="h-fit"
             onClick={() => setShowSuccess(false)}
+            aria-label="Cerrar"
           >
             <XCircleSolid className="w-4 h-4 text-neutral-500" />
           </IconButton>

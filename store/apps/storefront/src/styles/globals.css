@@ -15,7 +15,7 @@
     --bg-field-hover: #1c1c22;
     --fg-base: #f4f4f5;
     --fg-subtle: rgba(244, 244, 245, 0.7);
-    --fg-muted: rgba(244, 244, 245, 0.45);
+    --fg-muted: rgba(244, 244, 245, 0.72);
     --fg-interactive: #5ce1ff;
     --border-base: rgba(255, 255, 255, 0.12);
     --border-interactive: rgba(92, 225, 255, 0.6);
@@ -48,6 +48,10 @@
   .no-scrollbar {
     -ms-overflow-style: none; /* IE and Edge */
     scrollbar-width: none; /* Firefox */
+  }
+
+  .focus-neon {
+    @apply focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neon;
   }
 
   input:focus ~ label,

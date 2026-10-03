@@ -52,7 +52,7 @@ export default async function ProductRail({
               : "text-ui-fg-interactive"
           }
         >
-          View all
+          Ver todo
         </LocalizedClientLink>
       </div>
       <ul className="grid grid-cols-2 gap-x-6 gap-y-24 small:grid-cols-3 small:gap-y-36">
