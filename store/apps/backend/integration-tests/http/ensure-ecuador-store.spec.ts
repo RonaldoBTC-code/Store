@@ -1,6 +1,15 @@
 import { createSalesChannelsWorkflow } from "@medusajs/medusa/core-flows"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
-import { ECUADOR_SETUP_LOCK_KEY } from "../../src/scripts/ecuador-setup-lock"
+import {
+  ECUADOR_SETUP_LOCK_KEY,
+  withEcuadorSetupLock,
+} from "../../src/scripts/ecuador-setup-lock"
+
+const ECUADOR_LOCK_ROWS_SQL = `SELECT pid
+  FROM pg_locks
+ WHERE locktype = 'advisory'
+   AND objsubid = 1
+   AND ((classid::bigint << 32) | objid::bigint) = $1::bigint`
 import ensureEcuadorStore from "../../src/scripts/ensure-ecuador-store"
 
 jest.setTimeout(300_000)
@@ -147,67 +156,51 @@ medusaIntegrationTestRunner({
       expect(ivaRates).toHaveLength(1)
     }, 60_000)
 
-    it("releases the advisory lock when setup throws so the next try can take it", async () => {
+    it("holds one Ecuador advisory row during run and none after unlock", async () => {
       const container = getContainer()
-      await createSalesChannelsWorkflow(container).run({
-        input: {
-          salesChannelsData: [{ name: "Default Sales Channel" }],
-        },
-      })
-
-      await expect(ensureEcuadorStore({ container })).rejects.toThrow(
-        /Refusing to pick one/
-      )
-
       const pgConnection = container.resolve(
         ContainerRegistrationKeys.PG_CONNECTION
       ) as {
         client: {
           acquireConnection: () => Promise<{
             query: (sql: string, params?: unknown[]) => Promise<{
-              rows: { acquired?: boolean; unlocked?: boolean; pid?: number }[]
+              rows: { pid?: number }[]
             }>
           }>
           releaseConnection: (connection: unknown) => Promise<unknown>
         }
       }
-      const key = BigInt(ECUADOR_SETUP_LOCK_KEY)
-      const classid = Number((key >> 32n) & 0xffffffffn)
-      const objid = Number(key & 0xffffffffn)
-      // Two checkouts at once are two sessions. The second one cannot be
-      // the connection the pool would return first, so a reentrant
-      // pg_try_advisory_lock on a still-held session cannot pass this test.
-      const first = await pgConnection.client.acquireConnection()
-      const second = await pgConnection.client.acquireConnection()
+      // Checked out for the whole test, so this session is not the one
+      // withEcuadorSetupLock holds. Medusa's own advisory locks stay out
+      // of the count because the predicate rebuilds this key only.
+      const watcher = await pgConnection.client.acquireConnection()
       try {
-        const firstPid = await first.query("SELECT pg_backend_pid() AS pid")
-        const secondPid = await second.query("SELECT pg_backend_pid() AS pid")
-        expect(secondPid.rows[0]?.pid).not.toBe(firstPid.rows[0]?.pid)
+        const watcherPid = await watcher.query("SELECT pg_backend_pid() AS pid")
+        const key = [String(ECUADOR_SETUP_LOCK_KEY)]
 
-        const held = await first.query(
-          `SELECT pid
-             FROM pg_locks
-            WHERE locktype = 'advisory'
-              AND classid = $1::oid
-              AND objid = $2::oid
-              AND objsubid = 1`,
-          [String(classid), String(objid)]
-        )
-        expect(held.rows).toEqual([])
+        await withEcuadorSetupLock(container, async () => {
+          const during = await watcher.query(ECUADOR_LOCK_ROWS_SQL, key)
+          expect(during.rows).toHaveLength(1)
+          expect(Number(during.rows[0]?.pid)).not.toBe(
+            Number(watcherPid.rows[0]?.pid)
+          )
+        })
 
-        const locked = await second.query(
-          "SELECT pg_try_advisory_lock($1::bigint) AS acquired",
-          [String(ECUADOR_SETUP_LOCK_KEY)]
+        const afterUnlock = await watcher.query(ECUADOR_LOCK_ROWS_SQL, key)
+        expect(afterUnlock.rows).toHaveLength(0)
+
+        await createSalesChannelsWorkflow(container).run({
+          input: {
+            salesChannelsData: [{ name: "Default Sales Channel" }],
+          },
+        })
+        await expect(ensureEcuadorStore({ container })).rejects.toThrow(
+          /Refusing to pick one/
         )
-        expect(locked.rows[0]?.acquired).toBe(true)
-        const unlocked = await second.query(
-          "SELECT pg_advisory_unlock($1::bigint) AS unlocked",
-          [String(ECUADOR_SETUP_LOCK_KEY)]
-        )
-        expect(unlocked.rows[0]?.unlocked).toBe(true)
+        const afterThrow = await watcher.query(ECUADOR_LOCK_ROWS_SQL, key)
+        expect(afterThrow.rows).toHaveLength(0)
       } finally {
-        await pgConnection.client.releaseConnection(second)
-        await pgConnection.client.releaseConnection(first)
+        await pgConnection.client.releaseConnection(watcher)
       }
     }, 60_000)
   },
