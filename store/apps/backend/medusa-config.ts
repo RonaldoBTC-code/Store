@@ -1,13 +1,17 @@
 import { loadEnv, defineConfig } from "@medusajs/framework/utils"
-import { resolveDatabaseSsl } from "./src/utils/database-ssl"
+import {
+  resolveDatabaseSsl,
+  warnIfProductionSslDisabled,
+} from "./src/utils/database-ssl"
 import { enforceStartupSecrets } from "./src/utils/validate-production-secrets"
 
 loadEnv(process.env.NODE_ENV || "development", process.cwd())
 
-// El chequeo solo se aplica en `medusa start` / `medusa develop` con
-// NODE_ENV=production y fuera de CI. `medusa build`, migraciones y seeds
-// cargan este archivo y siguen de largo.
+// Secretos: solo `medusa start` / `medusa develop` en producción
+// (`production` o `prod`). CI no lo salta. UNSAFE_SKIP_STARTUP_CHECKS
+// omite solo este chequeo. `medusa build`, migraciones y seeds no entran.
 enforceStartupSecrets(process.env, process.argv)
+warnIfProductionSslDisabled(process.env)
 
 const databaseSsl = resolveDatabaseSsl(process.env)
 

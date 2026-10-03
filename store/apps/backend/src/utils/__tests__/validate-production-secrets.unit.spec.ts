@@ -5,23 +5,30 @@ import {
   validateProductionSecrets,
 } from "../validate-production-secrets"
 
+const JWT_OK = "j".repeat(32)
+const COOKIE_OK = "c".repeat(32)
+const DATABASE_URL = "postgres://usuario:NO-MOSTRAR-ESTA-CLAVE@db.interno:5432/medusa"
+
 const validEnv = {
   NODE_ENV: "production",
-  JWT_SECRET: "jwt-real-distinto-de-la-plantilla",
-  COOKIE_SECRET: "cookie-real-distinta-de-la-plantilla",
-  DATABASE_URL: "postgres://usuario:clave-unica@db.interno:5432/medusa",
+  JWT_SECRET: JWT_OK,
+  COOKIE_SECRET: COOKIE_OK,
+  DATABASE_URL,
 }
 
+const startArgv = ["node", "cli.js", "start"]
+
 describe("validateProductionSecrets", () => {
-  it("no reporta nada cuando los tres valores están definidos y no son la plantilla", () => {
+  it("no reporta nada cuando los secretos son largos, distintos y no son plantilla", () => {
     expect(validateProductionSecrets(validEnv)).toEqual([])
   })
 
-  it("marca secretos vacíos y DATABASE_URL ausente", () => {
+  it("marca el valor vacío de .env.template como ausente", () => {
     expect(
       validateProductionSecrets({
-        JWT_SECRET: "   ",
-        COOKIE_SECRET: "",
+        JWT_SECRET: "",
+        COOKIE_SECRET: "   ",
+        DATABASE_URL: "   ",
       })
     ).toEqual([
       { variable: "JWT_SECRET", code: "missing" },
@@ -30,138 +37,230 @@ describe("validateProductionSecrets", () => {
     ])
   })
 
-  it("marca el valor de plantilla sin distinguir mayúsculas", () => {
+  it.each(["supersecret", "changeme", "secret", "password", "ChangeMe", "PASSWORD"])(
+    "marca %j como plantilla y el mensaje no incluye el valor",
+    (template) => {
+      const issues = validateProductionSecrets({
+        ...validEnv,
+        JWT_SECRET: template,
+      })
+
+      expect(issues).toContainEqual({ variable: "JWT_SECRET", code: "template" })
+
+      const message = formatStartupSecretError(issues)
+      expect(message).toContain("JWT_SECRET")
+      expect(message).toContain("plantilla")
+      expect(message).not.toContain(template)
+      expect(message).not.toContain(DATABASE_URL)
+    }
+  )
+
+  it("rechaza un secreto de menos de 32 caracteres sin imprimirlo", () => {
+    const corto = "x".repeat(31)
+    const issues = validateProductionSecrets({
+      ...validEnv,
+      COOKIE_SECRET: corto,
+    })
+
+    expect(issues).toEqual([
+      { variable: "COOKIE_SECRET", code: "too_short" },
+    ])
+
+    const message = formatStartupSecretError(issues)
+    expect(message).toContain("COOKIE_SECRET")
+    expect(message).toContain("32")
+    expect(message).not.toContain(corto)
+  })
+
+  it("acepta 32 caracteres justos si no es plantilla ni está repetido", () => {
     expect(
       validateProductionSecrets({
-        ...validEnv,
-        JWT_SECRET: "supersecret",
-        COOKIE_SECRET: "SuperSecret",
+        JWT_SECRET: "a".repeat(32),
+        COOKIE_SECRET: "b".repeat(32),
+        DATABASE_URL: "postgres://localhost/medusa",
       })
-    ).toEqual([
-      { variable: "JWT_SECRET", code: "template" },
-      { variable: "COOKIE_SECRET", code: "template" },
-    ])
+    ).toEqual([])
+  })
+
+  it("rechaza secretos iguales sin imprimir el valor compartido", () => {
+    const compartido = "q".repeat(40)
+    const issues = validateProductionSecrets({
+      ...validEnv,
+      JWT_SECRET: compartido,
+      COOKIE_SECRET: compartido,
+    })
+
+    expect(issues).toEqual([{ variable: "JWT_SECRET", code: "equal" }])
+
+    const message = formatStartupSecretError(issues)
+    expect(message).toContain("JWT_SECRET")
+    expect(message).toContain("COOKIE_SECRET")
+    expect(message).toContain("iguales")
+    expect(message).not.toContain(compartido)
+    expect(message).not.toContain(DATABASE_URL)
   })
 })
 
 describe("shouldEnforceStartupSecrets", () => {
-  const production = { NODE_ENV: "production" }
-
   it("corre en medusa start y medusa develop en producción", () => {
     expect(
-      shouldEnforceStartupSecrets(production, ["node", "cli.js", "start"])
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production" },
+        startArgv
+      )
     ).toBe(true)
     expect(
-      shouldEnforceStartupSecrets(production, ["node", "cli.js", "develop"])
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "prod" },
+        ["node", "cli.js", "develop"]
+      )
     ).toBe(true)
   })
 
-  it("no corre en build, migraciones, seeds ni fuera de producción", () => {
+  it.each(["Production", " production ", "prod", "PRODUCTION"])(
+    "corre con NODE_ENV=%j",
+    (nodeEnv) => {
+      expect(
+        shouldEnforceStartupSecrets({ NODE_ENV: nodeEnv }, startArgv)
+      ).toBe(true)
+    }
+  )
+
+  it("corre con CI=true y NODE_ENV=production", () => {
     expect(
-      shouldEnforceStartupSecrets(production, ["node", "cli.js", "build"])
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production", CI: "true", GITHUB_ACTIONS: "true" },
+        startArgv
+      )
+    ).toBe(true)
+  })
+
+  it("no corre sin UNSAFE_SKIP en build, migraciones, seeds ni fuera de producción", () => {
+    expect(
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production" },
+        ["node", "cli.js", "build"]
+      )
     ).toBe(false)
     expect(
-      shouldEnforceStartupSecrets(production, [
-        "node",
-        "cli.js",
-        "db:migrate",
-      ])
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production" },
+        ["node", "cli.js", "db:migrate"]
+      )
     ).toBe(false)
     expect(
-      shouldEnforceStartupSecrets(production, [
-        "node",
-        "cli.js",
-        "exec",
-        "./src/scripts/seed.ts",
-      ])
+      shouldEnforceStartupSecrets(
+        { NODE_ENV: "production" },
+        ["node", "cli.js", "exec", "./src/scripts/seed.ts"]
+      )
     ).toBe(false)
     expect(
       shouldEnforceStartupSecrets(
         { NODE_ENV: "development" },
-        ["node", "cli.js", "start"]
-      )
-    ).toBe(false)
-    expect(
-      shouldEnforceStartupSecrets(
-        { NODE_ENV: "test" },
-        ["node", "cli.js", "develop"]
+        startArgv
       )
     ).toBe(false)
   })
 
-  it("no corre en CI aunque el comando sea start y NODE_ENV=production", () => {
+  it("UNSAFE_SKIP_STARTUP_CHECKS salta solo el chequeo de secretos", () => {
     expect(
       shouldEnforceStartupSecrets(
-        { NODE_ENV: "production", CI: "true" },
-        ["node", "cli.js", "start"]
-      )
-    ).toBe(false)
-    expect(
-      shouldEnforceStartupSecrets(
-        { NODE_ENV: "production", GITHUB_ACTIONS: "true" },
-        ["node", "cli.js", "develop"]
+        {
+          NODE_ENV: "production",
+          CI: "true",
+          UNSAFE_SKIP_STARTUP_CHECKS: "true",
+        },
+        startArgv
       )
     ).toBe(false)
   })
 })
 
 describe("enforceStartupSecrets", () => {
-  it("lanza en producción al arrancar si falta un secreto, sin incluir el valor", () => {
-    const databaseUrl = "postgres://usuario:NO-MOSTRAR-ESTA-CLAVE@db/medusa"
-
+  it("falla el arranque con CI=true y NODE_ENV=production sin secretos", () => {
     expect(() =>
       enforceStartupSecrets(
         {
           NODE_ENV: "production",
-          JWT_SECRET: "supersecret",
-          COOKIE_SECRET: "cookie-real-distinta",
-          DATABASE_URL: "",
+          CI: "true",
+          GITLAB_CI: "true",
         },
-        ["node", "cli.js", "start"]
+        startArgv,
+        jest.fn()
       )
     ).toThrow(/JWT_SECRET/)
+  })
+
+  it("sin UNSAFE_SKIP_STARTUP_CHECKS el chequeo corre y no imprime valores", () => {
+    const warn = jest.fn()
 
     try {
       enforceStartupSecrets(
         {
-          NODE_ENV: "production",
+          NODE_ENV: " PRODUCTION ",
           JWT_SECRET: "supersecret",
-          COOKIE_SECRET: "cookie-real-distinta",
-          DATABASE_URL: databaseUrl,
+          COOKIE_SECRET: COOKIE_OK,
+          DATABASE_URL,
         },
-        ["node", "cli.js", "start"]
+        startArgv,
+        warn
       )
       throw new Error("debía fallar")
     } catch (error) {
       expect(error).toBeInstanceOf(Error)
       const message = (error as Error).message
+      expect(message).toContain("JWT_SECRET")
+      expect(message).toContain("plantilla")
       expect(message).not.toContain("supersecret")
-      expect(message).not.toContain(databaseUrl)
-      expect(message).not.toContain("cookie-real-distinta")
-      expect(message).toContain("openssl rand -base64 48")
+      expect(message).not.toContain(DATABASE_URL)
+      expect(message).not.toContain(COOKIE_OK)
     }
+
+    expect(warn).not.toHaveBeenCalled()
   })
 
-  it("no hace nada durante medusa build aunque NODE_ENV sea production", () => {
+  it("con UNSAFE_SKIP_STARTUP_CHECKS omite secretos, avisa y no toca el SSL", () => {
+    const warn = jest.fn()
+
+    expect(() =>
+      enforceStartupSecrets(
+        {
+          NODE_ENV: "prod",
+          CI: "true",
+          UNSAFE_SKIP_STARTUP_CHECKS: "true",
+          JWT_SECRET: "supersecret",
+          COOKIE_SECRET: "password",
+          DATABASE_URL,
+        },
+        startArgv,
+        warn
+      )
+    ).not.toThrow()
+
+    expect(warn).toHaveBeenCalledTimes(1)
+    const message = warn.mock.calls[0][0] as string
+    expect(message).toContain("UNSAFE_SKIP_STARTUP_CHECKS")
+    expect(message).toContain("SSL")
+    expect(message).not.toContain("supersecret")
+    expect(message).not.toContain("password")
+    expect(message).not.toContain(DATABASE_URL)
+  })
+
+  it("no avisa ni falla durante medusa build", () => {
+    const warn = jest.fn()
+
     expect(() =>
       enforceStartupSecrets(
         {
           NODE_ENV: "production",
+          UNSAFE_SKIP_STARTUP_CHECKS: "true",
           JWT_SECRET: "supersecret",
         },
-        ["node", "cli.js", "build"]
+        ["node", "cli.js", "build"],
+        warn
       )
     ).not.toThrow()
-  })
 
-  it("describe los problemas sin volcar secretos", () => {
-    const message = formatStartupSecretError([
-      { variable: "COOKIE_SECRET", code: "template" },
-      { variable: "DATABASE_URL", code: "missing" },
-    ])
-
-    expect(message).toContain("COOKIE_SECRET")
-    expect(message).toContain("DATABASE_URL")
-    expect(message).not.toContain("supersecret")
+    expect(warn).not.toHaveBeenCalled()
   })
 })

@@ -9,7 +9,7 @@ Local, staging y producción usan **bases distintas y credenciales distintas**. 
 | Entorno | Base | SSL | Secretos |
 | --- | --- | --- | --- |
 | Local | Postgres en la máquina de quien desarrolla | Apagado | Pueden ser de desarrollo. No se commitean. |
-| CI | Base efímera del pipeline | Apagado | Los inyecta el pipeline. No viven en el repo. |
+| CI | Base efímera del pipeline. Este repo no arranca el servidor en CI. | Si el job no es producción, apagado. Si `NODE_ENV` es producción, SSL con verificación: no hay excepción por `CI`. | Si el job arranca el servidor en producción, hacen falta secretos reales. `CI=true` no los salta. |
 | Staging | Instancia propia, datos que no son los de clientes reales | Igual que producción: verificación de certificado | Distintos de los de producción |
 | Producción | Instancia propia | Verificación de certificado | Generados para producción. Nunca los de plantilla |
 
@@ -22,28 +22,32 @@ Plantilla: `store/apps/backend/.env.template`. Copiar a `.env` (no se versiona) 
 | Variable | Uso |
 | --- | --- |
 | `DATABASE_URL` | Conexión de Medusa a Postgres. Obligatoria para arrancar en producción. |
-| `DATABASE_SSL` | `false` sin SSL. `true` con SSL y verificación de certificado. Vacía: apagado en local, test y CI; encendido con verificación si `NODE_ENV=production` y no es CI. |
+| `DATABASE_SSL` | `false` sin SSL. `true` con SSL y verificación de certificado. Vacía: apagado fuera de producción; encendido con verificación si `NODE_ENV` es producción. `CI` no cambia el defecto. |
 | `DATABASE_CA_CERT` | Opcional. PEM (saltos de línea como `\n`) o ruta a un PEM, cuando el proveedor trae un CA propio. Solo se usa si SSL está encendido. |
-| `JWT_SECRET` | Firma de JWT. En producción no puede faltar ni ser `supersecret`. |
-| `COOKIE_SECRET` | Firma de cookies. Misma regla. |
-| `NODE_ENV` | `production` activa el chequeo de secretos al arrancar el servidor. |
-| `CI` | Si vale `true` o `1` (también `GITHUB_ACTIONS`, `GITLAB_CI`, `CIRCLECI`, `TRAVIS`), no se exige el chequeo de secretos y el SSL por defecto queda apagado. El servidor de producción no debe definir `CI`. |
+| `JWT_SECRET` | Firma de JWT. En producción no puede faltar, medir menos de 32 caracteres, ser un valor de plantilla ni coincidir con `COOKIE_SECRET`. |
+| `COOKIE_SECRET` | Firma de cookies. La misma regla, y un valor distinto del de `JWT_SECRET`. |
+| `NODE_ENV` | Producción si, recortado y en minúsculas, es `production` o `prod`. Ahí se exige el chequeo de secretos al arrancar y el SSL por defecto. |
+| `UNSAFE_SKIP_STARTUP_CHECKS` | Solo `true` omite el chequeo de secretos y escribe una advertencia. No apaga el SSL. No usarlo en producción. |
 
-Generar cada secreto, uno distinto del otro:
+Generar cada secreto, uno distinto del otro y de al menos 32 caracteres:
 
 ```bash
 openssl rand -base64 48
 ```
 
-En producción, Ramoide configura al menos: `NODE_ENV=production`, `DATABASE_URL` de la base de producción, `DATABASE_SSL=true` (o vacío, que en ese caso enciende la verificación), `DATABASE_CA_CERT` si el CA no es uno de los que ya confía Node, y `JWT_SECRET` y `COOKIE_SECRET` recién generados. No definir `CI`.
+Quedan rechazados, sin distinguir mayúsculas: `supersecret`, `changeme`, `secret`, `password` y el valor vacío de `.env.template`. También se rechazan si los dos secretos son iguales o si alguno tiene menos de 32 caracteres. El mensaje nombra la variable y la regla. No imprime el valor ni `DATABASE_URL`.
 
-El código no vuelve a usar `rejectUnauthorized: false`. Si SSL está apagado, la conexión va sin SSL. Si está encendido, el certificado se verifica.
+En producción, Ramoide configura al menos: `NODE_ENV=production` (o `prod`), `DATABASE_URL` de la base de producción, `DATABASE_SSL=true` (o vacío, que en ese caso enciende la verificación), `DATABASE_CA_CERT` si el CA no es uno de los que ya confía Node, y `JWT_SECRET` y `COOKIE_SECRET` recién generados. No definir `UNSAFE_SKIP_STARTUP_CHECKS`.
+
+El código no vuelve a usar `rejectUnauthorized: false`. Si SSL está apagado, la conexión va sin SSL. Si está encendido, el certificado se verifica. Con `DATABASE_SSL=false` en producción el proceso sigue y escribe una advertencia, también sin la URL.
 
 ## Arranque
 
-Con `NODE_ENV=production`, fuera de CI, `medusa start` y `medusa develop` se niegan a arrancar si falta `DATABASE_URL`, o si `JWT_SECRET` o `COOKIE_SECRET` faltan o valen `supersecret`. El mensaje no imprime el secreto ni la URL.
+Con `NODE_ENV` de producción (`production` o `prod`, da igual mayúsculas y espacios alrededor), `medusa start` y `medusa develop` se niegan a arrancar si falla el chequeo de secretos o falta `DATABASE_URL`. `CI`, `GITHUB_ACTIONS` y el resto de variables de pipeline no saltan ese chequeo ni apagan el SSL por defecto.
 
-Ese chequeo no corre en `medusa build`, ni en `medusa db:migrate`, ni en scripts de seed, ni cuando `CI` está activo. El build del backend tiene que poder completarse sin variables de producción.
+`UNSAFE_SKIP_STARTUP_CHECKS=true` es la única forma de omitir el chequeo de secretos. El SSL sigue el valor de `DATABASE_SSL` o el defecto de producción. Al arrancar se escribe una advertencia visible.
+
+Ese chequeo no corre en `medusa build`, ni en `medusa db:migrate`, ni en scripts de seed. El build del backend tiene que poder completarse sin variables de producción.
 
 `register()` en `instrumentation.ts` repite el mismo chequeo. Medusa solo lo invoca al crear el servidor.
 

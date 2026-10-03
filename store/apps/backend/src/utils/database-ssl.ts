@@ -1,11 +1,13 @@
 import fs from "fs"
 import { MedusaError } from "@medusajs/framework/utils"
+import { isProductionEnv } from "./node-env"
 
 /**
  * SSL de Postgres para Medusa.
  *
- * Local y CI quedan sin SSL. Producción verifica el certificado.
- * Nunca se usa rejectUnauthorized: false.
+ * Fuera de producción queda apagado si DATABASE_SSL no se define.
+ * En producción (production o prod) se verifica el certificado.
+ * CI no cambia esa decisión. Nunca se usa rejectUnauthorized: false.
  */
 
 export type ProcessEnv = Record<string, string | undefined>
@@ -34,16 +36,8 @@ const SSL_ENABLED = new Set([
   "verify-full",
 ])
 
-const CI_FLAGS = ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "TRAVIS"]
-
-export function isContinuousIntegration(env: ProcessEnv): boolean {
-  return CI_FLAGS.some((name) => isTruthyFlag(env[name]))
-}
-
-function isTruthyFlag(value: string | undefined): boolean {
-  const normalized = value?.trim().toLowerCase()
-  return normalized === "1" || normalized === "true"
-}
+export const PRODUCTION_SSL_DISABLED_WARNING =
+  "ADVERTENCIA: DATABASE_SSL=false en producción. La conexión a Postgres no usa SSL."
 
 function unwrap(value: string | undefined): string {
   let trimmed = value?.trim() ?? ""
@@ -57,10 +51,39 @@ function unwrap(value: string | undefined): string {
 }
 
 /**
- * Si DATABASE_SSL no viene definido: encendido solo en producción y fuera de CI.
+ * Si DATABASE_SSL no viene definido: encendido solo en producción.
  */
 export function defaultDatabaseSslEnabled(env: ProcessEnv): boolean {
-  return env.NODE_ENV === "production" && !isContinuousIntegration(env)
+  return isProductionEnv(env.NODE_ENV)
+}
+
+/**
+ * Aviso, no error. No incluye DATABASE_URL.
+ * Solo cuando producción pide SSL apagado de forma explícita.
+ */
+export function productionSslDisabledWarning(
+  env: ProcessEnv
+): string | undefined {
+  if (!isProductionEnv(env.NODE_ENV)) {
+    return undefined
+  }
+
+  const requested = unwrap(env.DATABASE_SSL).toLowerCase()
+  if (!SSL_DISABLED.has(requested)) {
+    return undefined
+  }
+
+  return PRODUCTION_SSL_DISABLED_WARNING
+}
+
+export function warnIfProductionSslDisabled(
+  env: ProcessEnv,
+  warn: (message: string) => void = writeWarning
+): void {
+  const message = productionSslDisabledWarning(env)
+  if (message) {
+    warn(message)
+  }
 }
 
 /**
@@ -136,4 +159,8 @@ function loadCaCertificate(
 
 function readCaFileFromDisk(filePath: string): string {
   return fs.readFileSync(filePath, "utf8")
+}
+
+function writeWarning(message: string): void {
+  process.stderr.write(`${message}\n`)
 }
