@@ -18,7 +18,13 @@ const useDatabaseCredentials = () => {
       "DATABASE_URL could not be read for the Ecuador setup integration test"
     )
   }
-  process.env.DB_HOST = url.hostname
+  // @medusajs/test-utils 2.21 turns SSL off only when the database URL
+  // contains the literal host "localhost". CI uses 127.0.0.1, and that
+  // enables ssl against postgres:15 with TLS disabled, which fails with
+  // "server does not support SSL". Map that host before test-utils reads
+  // DB_HOST. The workflow that sets DATABASE_URL stays unchanged.
+  const host = url.hostname.replace(/^\[|\]$/g, "")
+  process.env.DB_HOST = host === "127.0.0.1" ? "localhost" : host
   process.env.DB_PORT = url.port || "5432"
   process.env.DB_USERNAME = decodeURIComponent(url.username)
   if (url.password) {
@@ -33,11 +39,32 @@ const { medusaIntegrationTestRunner } =
 
 type NamedRecord = { name?: string | null }
 type TypedRecord = { type?: string | null }
+type RegionRecord = {
+  countries?: { iso_2?: string | null }[] | null
+}
+type ServiceZoneRecord = { id?: string | null }
+type FulfillmentSetRecord = {
+  id?: string | null
+  service_zones?: ServiceZoneRecord[] | null
+}
+type StockLocationRecord = {
+  name?: string | null
+  fulfillment_sets?: FulfillmentSetRecord[] | null
+}
+type TaxRateRecord = {
+  name?: string | null
+  code?: string | null
+  rate?: number | null
+}
+type TaxRegionRecord = {
+  country_code?: string | null
+  tax_rates?: TaxRateRecord[] | null
+}
 
 medusaIntegrationTestRunner({
   dbName: "ecuador_setup_lock",
   testSuite: ({ getContainer }) => {
-    it("keeps one Default Sales Channel and one default shipping profile when setup runs twice in parallel", async () => {
+    it("keeps one of each Ecuador store row when setup runs twice in parallel", async () => {
       const container = getContainer()
 
       await Promise.all([
@@ -54,6 +81,34 @@ medusaIntegrationTestRunner({
         entity: "shipping_profile",
         fields: ["id", "type"],
       })
+      const { data: regions } = await query.graph({
+        entity: "region",
+        fields: ["id", "countries.iso_2"],
+      })
+      const { data: locations } = await query.graph({
+        entity: "stock_location",
+        fields: [
+          "id",
+          "name",
+          "fulfillment_sets.id",
+          "fulfillment_sets.service_zones.id",
+        ],
+      })
+      const { data: shippingOptions } = await query.graph({
+        entity: "shipping_option",
+        fields: ["id", "name"],
+      })
+      const { data: taxRegions } = await query.graph({
+        entity: "tax_region",
+        fields: [
+          "id",
+          "country_code",
+          "tax_rates.id",
+          "tax_rates.name",
+          "tax_rates.code",
+          "tax_rates.rate",
+        ],
+      })
 
       const defaultChannels = ((channels ?? []) as NamedRecord[]).filter(
         (channel) => channel.name === "Default Sales Channel"
@@ -61,9 +116,33 @@ medusaIntegrationTestRunner({
       const defaultProfiles = ((profiles ?? []) as TypedRecord[]).filter(
         (profile) => profile.type === "default"
       )
+      const ecuadorRegions = ((regions ?? []) as RegionRecord[]).filter(
+        (region) =>
+          (region.countries ?? []).some((country) => country.iso_2 === "ec")
+      )
+      const stockLocations = (locations ?? []) as StockLocationRecord[]
+      const fulfillmentSets = stockLocations.flatMap(
+        (location) => location.fulfillment_sets ?? []
+      )
+      const serviceZones = fulfillmentSets.flatMap(
+        (set) => set.service_zones ?? []
+      )
+      const ivaRates = ((taxRegions ?? []) as TaxRegionRecord[])
+        .filter((region) => region.country_code === "ec")
+        .flatMap((region) => region.tax_rates ?? [])
+        .filter(
+          (rate) =>
+            rate.name === "IVA" && rate.code === "IVA" && rate.rate === 15
+        )
 
       expect(defaultChannels).toHaveLength(1)
       expect(defaultProfiles).toHaveLength(1)
+      expect(ecuadorRegions).toHaveLength(1)
+      expect(stockLocations).toHaveLength(1)
+      expect(fulfillmentSets).toHaveLength(1)
+      expect(serviceZones).toHaveLength(1)
+      expect(shippingOptions ?? []).toHaveLength(1)
+      expect(ivaRates).toHaveLength(1)
     })
   },
 })
