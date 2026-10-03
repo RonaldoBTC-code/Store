@@ -1,14 +1,8 @@
 import { getCartId } from "@lib/data/cookies"
 import BtcpayReturn from "@modules/checkout/components/btcpay-return"
 
-export default async function BtcpayReturnPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>
-}) {
-  const params = await searchParams
-  const queryCartId = typeof params.cart_id === "string" ? params.cart_id : ""
-  const cartId = queryCartId || (await getCartId()) || ""
+export default async function BtcpayReturnPage() {
+  const cartId = (await getCartId()) || ""
 
   if (!cartId) {
     return (

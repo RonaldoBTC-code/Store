@@ -101,6 +101,8 @@ Set these on the Medusa backend only. Leave them empty in `.env.template`. Do no
 | `BTCPAY_MAX_NEW_INVOICES_PER_IP` | New invoices allowed from one IP inside the window. Default `5` |
 | `BTCPAY_NEW_INVOICE_WINDOW_SECONDS` | Length of that IP window. Default `3600` |
 | `BTCPAY_MAX_UNITS_PER_PENDING_ORDER` | Largest unit count on one pending invoice. Default `4` |
+| `BTCPAY_STATUS_MAX_REQUESTS` | Status polls allowed per IP and per cart inside the window. Default `30` |
+| `BTCPAY_STATUS_WINDOW_SECONDS` | Length of that status window. Default `60` |
 
 Blank values keep the defaults. If any of the four connection variables is missing or blank, Medusa does not register the provider and the storefront will not offer it.
 
@@ -108,13 +110,13 @@ An open invoice holds stock until it expires, is canceled, or settles. The hold 
 
 Pending rows live in `btcpay_payment`, indexed on `(provider, status, cart_id)` and `(provider, status, customer_id)`.
 
-Postgres TLS is verified for every database host except `localhost`, `127.0.0.1`, and `::1`. The hostname `postgres` is not treated as local. CI uses `localhost`.
+`GET /store/btcpay/status` reads `cart_id` and `payment_session_id` only. An invoice id in the query is ignored. The payment session must belong to that cart. If the cart is assigned to a customer, the caller must be that customer. The JSON body is `state`, `message`, and sometimes `expires_at` and `order_id`. It does not include a name, email, address, or invoice id. Requests are limited per IP and per cart (`BTCPAY_STATUS_MAX_REQUESTS`, default 30, and `BTCPAY_STATUS_WINDOW_SECONDS`, default 60). A blocked caller gets HTTP 429 and a message with no counts.
 
 The return URL sent to BTCPay must use an origin already listed in `STORE_CORS`, and the path must end with `/checkout/btcpay/return`.
 
 After the variables are set, run the backend migrations so `btcpay_invoice_claim` and `btcpay_payment` exist (`pnpm exec medusa db:migrate` from `apps/backend`). The claim table's `invoice_id` unique index stops a webhook and the shopper's return from creating two orders for one invoice.
 
-Then run the Ecuador region script (`src/scripts/add-ec-region.ts`) so region `ec` includes `pp_btcpay_btcpay`. If the region already exists, the script adds BTCPay without removing other providers. You can also enable that provider on Ecuador in the Medusa admin. Do not enable it on other regions.
+The Ecuador region itself is created by the region seed, not by this payment provider. After that region exists, run `src/scripts/enable-btcpay-on-ec.ts`. It appends `pp_btcpay_btcpay` to region `ec` when the four connection variables are set, and it leaves every other provider in place. You can also enable that provider on Ecuador in the Medusa admin. Do not enable it on other regions.
 
 ## Checkout flow
 
@@ -162,19 +164,36 @@ The refund route and the `Invalid` mark are taken from the current BTCPay Server
 
 ## Browser domains and CSP
 
-The storefront does not load BTCPay JavaScript. Checkout is a full-page redirect to `checkoutLink`.
+Replace `<btcpay-origin>` below with the origin of `BTCPAY_URL` (scheme, host, and port only). Example: `BTCPAY_URL=https://btcpay.example` gives `https://btcpay.example`.
 
-Domains a browser hits:
+This storefront does not load BTCPay JavaScript and does not embed an iframe. Checkout is a full-page redirect to `checkoutLink` on that origin. The modal (`<btcpay-origin>/modal/btcpay.js`) is documented and is not used.
 
-| Direction | Origin |
+Origins Security should add for the storefront CSP in the current integration:
+
+| Directive | Origin | Why |
+| --- | --- | --- |
+| `form-action` | `<btcpay-origin>` | Checkout page. The invoice URL is `{BTCPAY_URL}/i/{invoiceId}` on this origin. |
+| Navigation, if the policy restricts it | `<btcpay-origin>` | Same full-page redirect. |
+
+Not required on the storefront for this integration:
+
+| Directive | Origin | Why it is omitted |
+| --- | --- | --- |
+| `script-src` | none | The modal script is not loaded. |
+| `frame-src` | none | No iframe and no modal. |
+| `connect-src` | none | The storefront polls its own backend. It does not open a socket to BTCPay. |
+
+BTCPay's own checkout page does open a websocket. BTCPay's CSP adds `connect-src` for `wss://<host>` when the page is served over https, and `ws://<host>` when it is served over http, on the same host as the request ([CSP change](https://github.com/btcpayserver/btcpayserver/commit/fc4e47cec608cc3dba24b19d0145ac69320b975e)). That socket belongs to the BTCPay origin, not the storefront. The storefront policy does not need it unless checkout is embedded later.
+
+If the modal is enabled later, the ecommerce guide says to load `{BTCPAY_URL}/modal/btcpay.js` ([guide](https://docs.btcpayserver.org/Development/ecommerce-integration-guide/)). That would add:
+
+| Directive | Origin |
 | --- | --- |
-| Shopper pays | The origin of `BTCPAY_URL` (invoice page, QR, Lightning) |
-| Shopper returns | The storefront origin used in `checkout.redirectURL`, which must also be in `STORE_CORS` |
-| Webhook and API | The Medusa backend calls BTCPay, and BTCPay calls the Medusa backend. Those are not browser requests. |
+| `script-src` | `<btcpay-origin>` |
+| `frame-src` | `<btcpay-origin>` |
+| `connect-src` | `wss://<btcpay-host>` (or `ws://<btcpay-host>` when `BTCPAY_URL` is http) |
 
-If you add a Content-Security-Policy on the storefront, the redirect does not need `script-src` or `frame-src` for BTCPay. Allow the BTCPay origin in any `form-action` or navigation restriction you add later.
-
-The official modal is not enabled here. If you turn it on later, the ecommerce guide tells you to load `{BTCPAY_URL}/modal/btcpay.js` and listen for modal messages. That needs `script-src`, `frame-src`, and `connect-src` for the BTCPay origin. Confirm the exact script path on your instance's `/docs`, because the public Greenfield page is a client-rendered app and did not return a schema to this implementation.
+The shopper returns to the storefront origin in `checkout.redirectURL`, which must also be in `STORE_CORS`. Webhook and API calls are server to server.
 
 ## What was checked against the docs, and what was not
 

@@ -354,7 +354,7 @@ describe("BTCPay payment provider", () => {
       return invoice({
         id: `inv${created}`,
         checkoutLink: `${ORIGIN}/i/inv${created}`,
-        expirationTime: "2026-10-03T15:00:00.000Z",
+        expirationTime: "2099-01-01T00:00:00.000Z",
       })
     })
     const stock = stockRecorder()

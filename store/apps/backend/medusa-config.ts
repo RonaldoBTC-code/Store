@@ -1,5 +1,4 @@
 import { loadEnv, defineConfig } from '@medusajs/framework/utils'
-import { databaseSsl } from './src/utils/database-ssl'
 
 loadEnv(process.env.NODE_ENV || 'development', process.cwd())
 
@@ -15,7 +14,7 @@ module.exports = defineConfig({
     databaseUrl: process.env.DATABASE_URL,
     databaseDriverOptions: {
       connection: {
-        ssl: databaseSsl(process.env.DATABASE_URL),
+        ssl: { rejectUnauthorized: false },
       },
     },
     http: {

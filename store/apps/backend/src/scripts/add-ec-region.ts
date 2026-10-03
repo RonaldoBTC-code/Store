@@ -5,13 +5,8 @@ import {
   createServiceZonesWorkflow,
   createShippingOptionsWorkflow,
   createTaxRegionsWorkflow,
-  updateRegionsWorkflow,
   updateStoresWorkflow,
 } from "@medusajs/medusa/core-flows"
-import {
-  BTCPAY_PROVIDER_ID,
-  isBtcpayConfigured,
-} from "../modules/btcpay/constants"
 
 const COUNTRY_CODE = "ec"
 const REGION_NAME = "Ecuador"
@@ -100,9 +95,7 @@ export default async function addEcRegion({ container }: ExecArgs) {
             name: REGION_NAME,
             currency_code: CURRENCY_CODE,
             countries: [COUNTRY_CODE],
-            payment_providers: isBtcpayConfigured()
-              ? ["pp_system_default", BTCPAY_PROVIDER_ID]
-              : ["pp_system_default"],
+            payment_providers: ["pp_system_default"],
           },
         ],
       },
@@ -110,8 +103,6 @@ export default async function addEcRegion({ container }: ExecArgs) {
     regionId = result[0].id
     logger.info(`Created region ${REGION_NAME} (${regionId}).`)
   }
-
-  await ensureBtcpayOnEcuador(container, logger, regionId)
 
   const { data: taxRegions } = await query.graph({
     entity: "tax_region",
@@ -290,45 +281,4 @@ export default async function addEcRegion({ container }: ExecArgs) {
   }
 
   logger.info("Ecuador USD setup complete.")
-}
-
-type RegionWithProviders = {
-  id?: string
-  payment_providers?: { id?: string | null }[] | null
-}
-
-async function ensureBtcpayOnEcuador(
-  container: ExecArgs["container"],
-  logger: { info: (message: string) => void },
-  regionId: string
-) {
-  if (!isBtcpayConfigured()) {
-    return
-  }
-
-  const query = container.resolve(ContainerRegistrationKeys.QUERY)
-  const { data } = await query.graph({
-    entity: "region",
-    fields: ["id", "payment_providers.id"],
-    filters: { id: regionId },
-  })
-
-  const providers = ((data as RegionWithProviders[])[0]?.payment_providers ?? [])
-    .map((provider) => provider.id)
-    .filter((id): id is string => Boolean(id))
-
-  if (providers.includes(BTCPAY_PROVIDER_ID)) {
-    logger.info("BTCPay is already enabled for the Ecuador region.")
-    return
-  }
-
-  await updateRegionsWorkflow(container).run({
-    input: {
-      selector: { id: regionId },
-      update: {
-        payment_providers: [...providers, BTCPAY_PROVIDER_ID],
-      },
-    },
-  })
-  logger.info("Enabled BTCPay for the Ecuador region.")
 }

@@ -3,7 +3,7 @@ import type {
   MedusaRequest,
   MedusaResponse,
 } from "@medusajs/framework/http"
-import { defineMiddlewares } from "@medusajs/framework/http"
+import { authenticate, defineMiddlewares } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
 import { unitCount } from "../modules/btcpay/cart-snapshot"
 
@@ -76,6 +76,15 @@ export default defineMiddlewares({
       matcher: "/store/payment-collections/:id/payment-sessions",
       method: "POST",
       middlewares: [stampBtcpayPaymentContext],
+    },
+    {
+      matcher: "/store/btcpay/status",
+      method: "GET",
+      middlewares: [
+        authenticate("customer", ["session", "bearer"], {
+          allowUnauthenticated: true,
+        }),
+      ],
     },
   ],
 })
