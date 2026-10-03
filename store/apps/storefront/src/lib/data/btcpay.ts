@@ -7,6 +7,7 @@ export type BtcpayPaymentState = {
   state: "pending" | "settled" | "failed" | "cart_changed" | "mismatch"
   message: string
   order_id?: string | null
+  expires_at?: string | null
 }
 
 export async function getBtcpayPaymentState(cartId: string) {

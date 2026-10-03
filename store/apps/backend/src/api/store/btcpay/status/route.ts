@@ -4,6 +4,8 @@ import { BtcpayHttpClient } from "../../../../modules/btcpay/client"
 import { isBtcpayConfigured } from "../../../../modules/btcpay/constants"
 import { judgeInvoice } from "../../../../modules/btcpay/invoice-decision"
 import { majorToCents } from "../../../../modules/btcpay/money"
+import { getBtcpayPaymentStore } from "../../../../modules/btcpay/payment-registry"
+import { getStockReserver } from "../../../../modules/btcpay/stock"
 
 const PENDING_MESSAGE = "pago pendiente de confirmación"
 
@@ -150,10 +152,12 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
   }
 
   const verdict = judgeInvoice(fetched)
+  const expiresAt = fetched.expirationTime ?? null
   if (verdict.outcome === "authorize") {
     res.json({
       state: "settled",
       order_id: null,
+      expires_at: expiresAt,
       message: "Pago confirmado.",
     })
     return
@@ -162,15 +166,33 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
   if (verdict.outcome === "pending") {
     res.json({
       state: "pending",
+      expires_at: expiresAt,
       message: PENDING_MESSAGE,
     })
     return
   }
 
+  await releaseHold(fetched.id, fetched.status)
   res.json({
     state: "failed",
+    expires_at: expiresAt,
     message: "El pago con Bitcoin no se completó. Puedes intentar de nuevo.",
   })
+}
+
+async function releaseHold(invoiceId: string, status: string) {
+  const store = getBtcpayPaymentStore()
+  if (!store) {
+    return
+  }
+  const closed =
+    status === "Expired" ? "expired" : status === "Invalid" ? "invalid" : "canceled"
+  try {
+    const reservationIds = await store.close(invoiceId, closed)
+    await getStockReserver()?.release({ invoiceId, reservationIds })
+  } catch {
+    return
+  }
 }
 
 async function findOrderId(

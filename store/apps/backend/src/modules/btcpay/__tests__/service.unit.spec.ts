@@ -2,7 +2,10 @@ import { createHmac } from "crypto"
 import { MedusaError, PaymentActions } from "@medusajs/framework/utils"
 import { BtcpayClient, BtcpayInvoice } from "../client"
 import { claimOnce, MemoryBtcpayClaimStore } from "../claim"
+import { BTCPAY_PENDING_LIMIT, PENDING_LIMIT_MESSAGE } from "../limits"
+import { MemoryBtcpayPaymentStore } from "../payment-store"
 import BtcpayPaymentProviderService from "../service"
+import { StockReserver } from "../stock"
 
 const SECRET = "webhook-secret"
 const ORIGIN = "https://btcpay.example"
@@ -40,15 +43,36 @@ function sessionData(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function provider(client: BtcpayClient, claimStore = new MemoryBtcpayClaimStore()) {
+function provider(
+  client: BtcpayClient,
+  claimStore = new MemoryBtcpayClaimStore(),
+  extra: {
+    paymentStore?: MemoryBtcpayPaymentStore
+    stock?: StockReserver
+    limits?: {
+      maxPendingPerCart?: number
+      maxPendingPerSession?: number
+      maxPendingPerCustomer?: number
+      maxNewInvoicesPerIp?: number
+      newInvoiceWindowSeconds?: number
+      maxUnitsPerPendingOrder?: number
+    }
+  } = {}
+) {
   return new BtcpayPaymentProviderService(
-    { client, claimStore },
+    {
+      client,
+      claimStore,
+      paymentStore: extra.paymentStore,
+      stockReserver: extra.stock,
+    },
     {
       url: ORIGIN,
       storeId: "store123",
       apiKey: "test-key",
       webhookSecret: SECRET,
       allowedRedirectOrigins: ["http://localhost:8000"],
+      limits: extra.limits,
     }
   )
 }
@@ -84,6 +108,7 @@ describe("BTCPay payment provider", () => {
       data: {
         cart_id: "cart_1",
         session_id: "payses_1",
+        unit_count: 1,
         redirect_url: "http://localhost:8000/ec/checkout/btcpay/return",
       },
     })
@@ -321,6 +346,137 @@ describe("BTCPay payment provider", () => {
     expect(calls).toBe(1)
   })
 
+  it("blocks a second invoice for the same session without reserving stock", async () => {
+    const client = mockClient()
+    let created = 0
+    client.createInvoice.mockImplementation(async () => {
+      created += 1
+      return invoice({
+        id: `inv${created}`,
+        checkoutLink: `${ORIGIN}/i/inv${created}`,
+        expirationTime: "2026-10-03T15:00:00.000Z",
+      })
+    })
+    const stock = stockRecorder()
+    const payments = new MemoryBtcpayPaymentStore()
+    const service = provider(client, new MemoryBtcpayClaimStore(), {
+      paymentStore: payments,
+      stock,
+      limits: {
+        maxPendingPerCart: 5,
+        maxPendingPerSession: 1,
+        maxPendingPerCustomer: 5,
+      },
+    })
+    const input = {
+      amount: "10.00",
+      currency_code: "usd",
+      data: {
+        cart_id: "cart_1",
+        session_id: "payses_1",
+        unit_count: 1,
+        client_ip: "203.0.113.10",
+        redirect_url: "http://localhost:8000/ec/checkout/btcpay/return",
+      },
+    }
+
+    await service.initiatePayment(input)
+    await expect(service.initiatePayment(input)).rejects.toMatchObject({
+      code: BTCPAY_PENDING_LIMIT,
+      message: PENDING_LIMIT_MESSAGE,
+    })
+
+    expect(client.createInvoice).toHaveBeenCalledTimes(1)
+    expect(stock.reserve).toHaveBeenCalledTimes(1)
+    expect(PENDING_LIMIT_MESSAGE).not.toMatch(/\d/)
+  })
+
+  it("blocks a new invoice when the IP window is already full", async () => {
+    const client = mockClient()
+    let created = 0
+    client.createInvoice.mockImplementation(async () => {
+      created += 1
+      return invoice({
+        id: `inv${created}`,
+        checkoutLink: `${ORIGIN}/i/inv${created}`,
+      })
+    })
+    const stock = stockRecorder()
+    const payments = new MemoryBtcpayPaymentStore()
+    const service = provider(client, new MemoryBtcpayClaimStore(), {
+      paymentStore: payments,
+      stock,
+      limits: {
+        maxPendingPerCart: 5,
+        maxPendingPerSession: 5,
+        maxPendingPerCustomer: 5,
+        maxNewInvoicesPerIp: 2,
+      },
+    })
+
+    for (const id of ["a", "b"]) {
+      await service.initiatePayment({
+        amount: "10.00",
+        currency_code: "usd",
+        data: {
+          cart_id: `cart_${id}`,
+          session_id: `payses_${id}`,
+          unit_count: 1,
+          client_ip: "203.0.113.20",
+          redirect_url: "http://localhost:8000/ec/checkout/btcpay/return",
+        },
+      })
+    }
+
+    await expect(
+      service.initiatePayment({
+        amount: "10.00",
+        currency_code: "usd",
+        data: {
+          cart_id: "cart_c",
+          session_id: "payses_c",
+          unit_count: 1,
+          client_ip: "203.0.113.20",
+          redirect_url: "http://localhost:8000/ec/checkout/btcpay/return",
+        },
+      })
+    ).rejects.toMatchObject({ code: BTCPAY_PENDING_LIMIT })
+
+    expect(client.createInvoice).toHaveBeenCalledTimes(2)
+    expect(stock.reserve).toHaveBeenCalledTimes(2)
+  })
+
+  it("blocks a pending order over the unit cap without reserving stock", async () => {
+    const client = mockClient()
+    client.createInvoice.mockResolvedValue(invoice())
+    const stock = stockRecorder()
+    const service = provider(client, new MemoryBtcpayClaimStore(), {
+      paymentStore: new MemoryBtcpayPaymentStore(),
+      stock,
+      limits: { maxUnitsPerPendingOrder: 2 },
+    })
+
+    await expect(
+      service.initiatePayment({
+        amount: "30.00",
+        currency_code: "usd",
+        data: {
+          cart_id: "cart_big",
+          session_id: "payses_big",
+          unit_count: 3,
+          client_ip: "203.0.113.30",
+          redirect_url: "http://localhost:8000/ec/checkout/btcpay/return",
+        },
+      })
+    ).rejects.toMatchObject({
+      code: BTCPAY_PENDING_LIMIT,
+      message: PENDING_LIMIT_MESSAGE,
+    })
+
+    expect(client.createInvoice).not.toHaveBeenCalled()
+    expect(stock.reserve).not.toHaveBeenCalled()
+  })
+
   it("refuses to cancel a settled invoice and explains the pull-payment refund", async () => {
     const client = mockClient()
     client.getInvoice.mockResolvedValue(invoice())
@@ -348,6 +504,13 @@ describe("BTCPay payment provider", () => {
     )
   })
 })
+
+function stockRecorder(): StockReserver {
+  return {
+    reserve: jest.fn(async () => ["res_1"]),
+    release: jest.fn(async () => undefined),
+  }
+}
 
 function mockClient(): jest.Mocked<BtcpayClient> {
   return {

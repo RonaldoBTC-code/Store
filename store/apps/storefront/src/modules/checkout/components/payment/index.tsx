@@ -1,6 +1,12 @@
 "use client"
 import { RadioGroup } from "@headlessui/react"
-import { isBtcpay, isStripeLike, paymentInfoMap } from "@lib/constants"
+import {
+  BTCPAY_PENDING_LIMIT,
+  BTCPAY_PENDING_LIMIT_MESSAGE,
+  isBtcpay,
+  isStripeLike,
+  paymentInfoMap,
+} from "@lib/constants"
 import { initiatePaymentSession } from "@lib/data/cart"
 import { CheckCircleSolid, CreditCard } from "@medusajs/icons"
 import ErrorMessage from "@modules/checkout/components/error-message"
@@ -121,7 +127,7 @@ const Payment = ({
         )
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(checkoutErrorMessage(err))
     } finally {
       setIsLoading(false)
     }
@@ -283,6 +289,18 @@ const Payment = ({
       <Divider className="mt-8" />
     </div>
   )
+}
+
+function checkoutErrorMessage(err: unknown) {
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    err.code === BTCPAY_PENDING_LIMIT
+  ) {
+    return BTCPAY_PENDING_LIMIT_MESSAGE
+  }
+  return err instanceof Error ? err.message : String(err)
 }
 
 export default Payment

@@ -8,6 +8,7 @@ export type BtcpayInvoice = {
   status: string
   additionalStatus: string
   checkoutLink?: string
+  expirationTime?: string
   metadata: Record<string, unknown>
 }
 
@@ -196,8 +197,31 @@ function normalizeInvoice(payload: unknown): BtcpayInvoice {
         : "None",
     checkoutLink:
       typeof record.checkoutLink === "string" ? record.checkoutLink : undefined,
+    expirationTime: parseExpirationTime(record.expirationTime),
     metadata,
   }
+}
+
+/**
+ * Greenfield InvoiceData.expirationTime is a unix timestamp in seconds.
+ * ISO strings are accepted so a proxy that rewrites dates still works.
+ * https://docs.btcpayserver.org/Development/ecommerce-integration-guide/
+ */
+export function parseExpirationTime(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const ms = value < 1e12 ? value * 1000 : value
+    return new Date(ms).toISOString()
+  }
+  if (typeof value === "string" && value.trim()) {
+    if (/^\d+$/.test(value.trim())) {
+      return parseExpirationTime(Number(value.trim()))
+    }
+    const parsed = new Date(value)
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString()
+    }
+  }
+  return undefined
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

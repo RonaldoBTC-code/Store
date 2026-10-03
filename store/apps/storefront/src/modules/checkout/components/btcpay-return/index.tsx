@@ -22,6 +22,7 @@ export default function BtcpayReturn({ cartId }: { cartId: string }) {
   const { countryCode } = useParams()
   const [message, setMessage] = useState(PENDING_MESSAGE)
   const [failed, setFailed] = useState(false)
+  const [expiresAt, setExpiresAt] = useState<string | null>(null)
 
   useEffect(() => {
     let stopped = false
@@ -58,6 +59,7 @@ export default function BtcpayReturn({ cartId }: { cartId: string }) {
 
         if (status.state === "pending") {
           setFailed(false)
+          setExpiresAt(status.expires_at ?? null)
           setMessage(PENDING_MESSAGE)
           return
         }
@@ -94,6 +96,40 @@ export default function BtcpayReturn({ cartId }: { cartId: string }) {
       >
         {message}
       </p>
+      {expiresAt && !failed ? <ReservationCountdown expiresAt={expiresAt} /> : null}
     </div>
+  )
+}
+
+function ReservationCountdown({ expiresAt }: { expiresAt: string }) {
+  const [label, setLabel] = useState("")
+
+  useEffect(() => {
+    const tick = () => {
+      const remaining = new Date(expiresAt).getTime() - Date.now()
+      if (!Number.isFinite(remaining)) {
+        setLabel("")
+        return
+      }
+      const seconds = Math.max(0, Math.floor(remaining / 1000))
+      const minutes = Math.floor(seconds / 60)
+      const rest = seconds % 60
+      setLabel(
+        `La reserva vence en ${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`
+      )
+    }
+    tick()
+    const timer = window.setInterval(tick, 1000)
+    return () => window.clearInterval(timer)
+  }, [expiresAt])
+
+  if (!label) {
+    return null
+  }
+
+  return (
+    <p className="txt-medium mt-4" data-testid="btcpay-reservation-countdown">
+      {label}
+    </p>
   )
 }

@@ -1,6 +1,11 @@
+type MedusaErrorBody = {
+  message?: string
+  code?: string
+}
+
 type MedusaError = {
   response?: {
-    data: { message?: string } | string
+    data: MedusaErrorBody | string
     status: number
     headers: unknown
   }
@@ -23,8 +28,16 @@ export default function medusaError(error: unknown): never {
       typeof data === "object" && data !== null
         ? data.message || String(data)
         : data
+    const code =
+      typeof data === "object" && data !== null && typeof data.code === "string"
+        ? data.code
+        : undefined
 
-    throw new Error(message.charAt(0).toUpperCase() + message.slice(1) + ".")
+    const error = new Error(message.charAt(0).toUpperCase() + message.slice(1) + ".")
+    if (code) {
+      Object.assign(error, { code })
+    }
+    throw error
   } else if (err.request) {
     throw new Error("No response received: " + String(err.request))
   } else {

@@ -34,9 +34,25 @@ import {
 } from "./client"
 import { BtcpayClaimStore } from "./claim"
 import { getBtcpayClaimStore } from "./claim-registry"
+import { CartSnapshotReader, getCartSnapshotReader } from "./cart-snapshot"
 import { judgeInvoice } from "./invoice-decision"
+import {
+  BTCPAY_PENDING_LIMIT,
+  DEFAULT_INVOICE_TTL_MS,
+  hashClientIp,
+  LimitConfig,
+  PENDING_LIMIT_MESSAGE,
+  PaymentStatus,
+  resolveLimits,
+} from "./limits"
 import { centsToDecimal, majorToCents, requireCents } from "./money"
+import { getBtcpayPaymentStore } from "./payment-registry"
+import {
+  BtcpayPaymentStore,
+  MemoryBtcpayPaymentStore,
+} from "./payment-store"
 import { headerValue, readRawBody, verifyBtcpaySignature } from "./signature"
+import { getStockReserver, noopStockReserver, StockReserver } from "./stock"
 
 type BtcpayOptions = {
   url?: string
@@ -44,6 +60,7 @@ type BtcpayOptions = {
   apiKey?: string
   webhookSecret?: string
   allowedRedirectOrigins?: string[]
+  limits?: Partial<LimitConfig>
 }
 
 type WarnLogger = {
@@ -54,6 +71,9 @@ type InjectedDependencies = {
   logger?: Logger
   client?: BtcpayClient
   claimStore?: BtcpayClaimStore
+  paymentStore?: BtcpayPaymentStore
+  stockReserver?: StockReserver
+  cartReader?: CartSnapshotReader
 }
 
 type SessionData = {
@@ -65,6 +85,7 @@ type SessionData = {
   amount_cents: number
   amount: string
   currency_code: "usd"
+  expires_at: string
 }
 
 type ResolvedConfig = {
@@ -81,7 +102,12 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
   protected readonly logger_: WarnLogger
   protected readonly client_: BtcpayClient
   protected readonly claimStore_?: BtcpayClaimStore
+  protected readonly paymentStore_?: BtcpayPaymentStore
+  protected readonly stock_?: StockReserver
+  protected readonly cartReader_?: CartSnapshotReader
+  protected readonly limits_: LimitConfig
   protected readonly config_: ResolvedConfig
+  private readonly fallbackPayments_ = new MemoryBtcpayPaymentStore()
 
   static validateOptions(options: Record<string, unknown>): void {
     for (const key of ["url", "storeId", "apiKey", "webhookSecret"] as const) {
@@ -102,6 +128,10 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
       },
     }
     this.claimStore_ = container.claimStore
+    this.paymentStore_ = container.paymentStore
+    this.stock_ = container.stockReserver
+    this.cartReader_ = container.cartReader
+    this.limits_ = resolveLimits(options.limits)
     this.config_ = resolveConfig(options)
     this.client_ =
       container.client ??
@@ -115,7 +145,7 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
   async initiatePayment(
     input: InitiatePaymentInput
   ): Promise<InitiatePaymentOutput> {
-    const session = await this.createSessionData(input)
+    const session = await this.openInvoice(input)
     return {
       id: session.invoice_id,
       status: PaymentSessionStatus.PENDING,
@@ -137,11 +167,11 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
       return { status: PaymentSessionStatus.PENDING, data: current }
     }
 
-    if (current?.invoice_id) {
+    const session = await this.openInvoice(input, current?.invoice_id)
+    if (current?.invoice_id && current.invoice_id !== session.invoice_id) {
       await this.voidUnpaidInvoice(current.invoice_id)
+      await this.releaseHold(current.invoice_id, "canceled")
     }
-
-    const session = await this.createSessionData(input)
     return {
       status: PaymentSessionStatus.PENDING,
       data: session,
@@ -152,6 +182,7 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
     const current = readSession(input.data)
     if (current?.invoice_id) {
       await this.voidUnpaidInvoice(current.invoice_id)
+      await this.releaseHold(current.invoice_id, "canceled")
     }
     return { data: current ?? {} }
   }
@@ -172,6 +203,7 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
     }
 
     if (verdict.outcome === "reject") {
+      await this.releaseHold(session.invoice_id, closedStatus(invoice.status))
       throw new MedusaError(MedusaError.Types.NOT_ALLOWED, verdict.reason)
     }
 
@@ -189,6 +221,8 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
         "BTCPay invoice settlement is already being confirmed."
       )
     }
+
+    await this.releaseHold(session.invoice_id, "settled")
 
     return {
       status: PaymentSessionStatus.CAPTURED,
@@ -410,6 +444,9 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
 
     const verdict = judgeInvoice(invoice)
     if (verdict.outcome !== "authorize") {
+      if (verdict.outcome === "reject") {
+        await this.releaseHold(invoice.id, closedStatus(invoice.status))
+      }
       return {
         action:
           verdict.outcome === "pending"
@@ -431,8 +468,9 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
     }
   }
 
-  private async createSessionData(
-    input: InitiatePaymentInput | UpdatePaymentInput
+  private async openInvoice(
+    input: InitiatePaymentInput | UpdatePaymentInput,
+    replaceInvoiceId?: string
   ): Promise<SessionData> {
     this.assertConfigured()
     this.assertUsd(input.currency_code)
@@ -443,32 +481,92 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
       stringValue(input.data?.redirect_url),
       this.config_.allowedRedirectOrigins
     )
-    const amount = centsToDecimal(amountCents)
-    const invoice = await this.client_.createInvoice({
-      amount,
-      currency: "USD",
-      amountCents,
+    const snapshot = await this.cartReader()?.read(cartId)
+    const units = snapshot?.units ?? numberValue(input.data?.unit_count)
+    if (units == null || units < 1) {
+      throw new MedusaError(
+        MedusaError.Types.INVALID_DATA,
+        "BTCPay payment requires the cart quantities."
+      )
+    }
+    const customerId =
+      snapshot?.customerId ?? readCustomerId(input) ?? null
+    const ipHash = hashClientIp(stringValue(input.data?.client_ip))
+    const store = this.payments()
+    const acquired = await store.tryAcquire({
       cartId,
       paymentSessionId,
-      redirectUrl,
+      customerId,
+      ipHash,
+      units,
+      now: new Date(),
+      limits: this.limits_,
+      replaceInvoiceId,
     })
-
-    if (!invoice.checkoutLink) {
+    if (!acquired.ok) {
+      this.logger_.warn(
+        "Rejected a BTCPay invoice because a pending payment limit was reached."
+      )
       throw new MedusaError(
-        MedusaError.Types.UNEXPECTED_STATE,
-        "BTCPay did not return a checkoutLink."
+        MedusaError.Types.NOT_ALLOWED,
+        PENDING_LIMIT_MESSAGE,
+        BTCPAY_PENDING_LIMIT
       )
     }
 
-    return {
-      id: invoice.id,
-      invoice_id: invoice.id,
-      checkout_link: assertCheckoutLink(invoice.checkoutLink, this.config_.url),
-      cart_id: cartId,
-      payment_session_id: paymentSessionId,
-      amount_cents: amountCents,
-      amount,
-      currency_code: "usd",
+    const amount = centsToDecimal(amountCents)
+    let invoice: BtcpayInvoice | null = null
+    let reservationIds: string[] = []
+    try {
+      invoice = await this.client_.createInvoice({
+        amount,
+        currency: "USD",
+        amountCents,
+        cartId,
+        paymentSessionId,
+        redirectUrl,
+      })
+      if (!invoice.checkoutLink) {
+        throw new MedusaError(
+          MedusaError.Types.UNEXPECTED_STATE,
+          "BTCPay did not return a checkoutLink."
+        )
+      }
+      reservationIds = await this.stock().reserve({
+        cartId,
+        invoiceId: invoice.id,
+        paymentSessionId,
+        units,
+      })
+      const expiresAt = invoiceExpiry(invoice.expirationTime)
+      await store.commitInvoice({
+        id: acquired.id,
+        invoiceId: invoice.id,
+        expiresAt,
+        reservationIds,
+      })
+      return {
+        id: invoice.id,
+        invoice_id: invoice.id,
+        checkout_link: assertCheckoutLink(invoice.checkoutLink, this.config_.url),
+        cart_id: cartId,
+        payment_session_id: paymentSessionId,
+        amount_cents: amountCents,
+        amount,
+        currency_code: "usd",
+        expires_at: expiresAt.toISOString(),
+      }
+    } catch (error) {
+      if (invoice && reservationIds.length) {
+        await this.stock()
+          .release({ invoiceId: invoice.id, reservationIds })
+          .catch(() => undefined)
+      }
+      if (invoice?.id) {
+        await this.voidUnpaidInvoice(invoice.id)
+      }
+      await store.abort(acquired.id)
+      throw error
     }
   }
 
@@ -520,6 +618,26 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
         `Could not invalidate unpaid BTCPay invoice ${invoiceId}.`
       )
     }
+  }
+
+  private payments(): BtcpayPaymentStore {
+    return this.paymentStore_ ?? getBtcpayPaymentStore() ?? this.fallbackPayments_
+  }
+
+  private stock(): StockReserver {
+    return this.stock_ ?? getStockReserver() ?? noopStockReserver
+  }
+
+  private cartReader(): CartSnapshotReader | null {
+    return this.cartReader_ ?? getCartSnapshotReader()
+  }
+
+  private async releaseHold(
+    invoiceId: string,
+    status: Exclude<PaymentStatus, "holding" | "pending">
+  ) {
+    const reservationIds = await this.payments().close(invoiceId, status)
+    await this.stock().release({ invoiceId, reservationIds })
   }
 
   private claims(): BtcpayClaimStore {
@@ -718,6 +836,7 @@ function readSession(data: Record<string, unknown> | undefined): SessionData | n
     amount_cents: amountCents,
     amount,
     currency_code: "usd",
+    expires_at: stringValue(data.expires_at),
   }
 }
 
@@ -730,6 +849,42 @@ function requireSession(data: Record<string, unknown> | undefined): SessionData 
     )
   }
   return session
+}
+
+function closedStatus(
+  status: string
+): Exclude<PaymentStatus, "holding" | "pending"> {
+  if (status === "Expired") {
+    return "expired"
+  }
+  if (status === "Invalid") {
+    return "invalid"
+  }
+  if (status === "Settled") {
+    return "settled"
+  }
+  return "canceled"
+}
+
+function invoiceExpiry(expirationTime: string | undefined): Date {
+  if (expirationTime) {
+    const parsed = new Date(expirationTime)
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed
+    }
+  }
+  return new Date(Date.now() + DEFAULT_INVOICE_TTL_MS)
+}
+
+function readCustomerId(
+  input: InitiatePaymentInput | UpdatePaymentInput
+): string | null {
+  const customer = input.context?.customer as { id?: unknown } | undefined
+  if (typeof customer?.id === "string" && customer.id) {
+    return customer.id
+  }
+  const fromData = stringValue(input.data?.customer_id)
+  return fromData || null
 }
 
 function stringValue(value: unknown): string {

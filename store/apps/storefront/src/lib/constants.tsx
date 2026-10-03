@@ -57,6 +57,11 @@ export const isBtcpay = (providerId?: string) => {
   return providerId?.startsWith("pp_btcpay_")
 }
 
+export const BTCPAY_PENDING_LIMIT = "BTCPAY_PENDING_LIMIT"
+
+export const BTCPAY_PENDING_LIMIT_MESSAGE =
+  "Ya tienes un pago pendiente, termínalo o espera a que venza"
+
 // Add currencies that don't need to be divided by 100
 export const noDivisionCurrencies = [
   "krw",
