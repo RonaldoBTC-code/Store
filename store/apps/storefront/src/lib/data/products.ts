@@ -15,6 +15,27 @@ type ProductListQueryParams = (HttpTypes.FindParams &
   option_value_id?: string | string[]
 }
 
+const PRODUCT_FIELDS =
+  "*variants.calculated_price,+variants.inventory_quantity,*variants.images,*variants.options,+metadata,+tags,"
+
+/**
+ * Listing and product-page queries both go through `listProducts`.
+ * Callers that pass their own `fields` still receive inventory quantity,
+ * because add-to-cart treats a missing quantity as zero.
+ */
+function fieldsWithInventoryQuantity(fields?: string) {
+  if (!fields) {
+    return PRODUCT_FIELDS
+  }
+
+  if (fields.includes("variants.inventory_quantity")) {
+    return fields
+  }
+
+  const separator = fields.endsWith(",") ? "" : ","
+  return `${fields}${separator}+variants.inventory_quantity`
+}
+
 export const listProducts = async ({
   pageParam = 1,
   queryParams,
@@ -61,6 +82,8 @@ export const listProducts = async ({
     ...(await getCacheOptions("products")),
   }
 
+  const { fields: requestedFields, ...productQuery } = queryParams ?? {}
+
   return sdk.client
     .fetch<{ products: HttpTypes.StoreProduct[]; count: number }>(
       `/store/products`,
@@ -70,9 +93,8 @@ export const listProducts = async ({
           limit,
           offset,
           region_id: region?.id,
-          fields:
-            "*variants.calculated_price,+variants.inventory_quantity,*variants.images,*variants.options,+metadata,+tags,",
-          ...queryParams,
+          ...productQuery,
+          fields: fieldsWithInventoryQuantity(requestedFields),
         },
         headers,
         next,

@@ -4,7 +4,7 @@ import {
   MedusaError,
   Modules,
 } from "@medusajs/framework/utils"
-import { assertSeedAllowed } from "./assert-seed-allowed"
+import { shouldDeleteMisplacedEcuadorZones } from "./ecuador-zone-cleanup"
 import {
   createApiKeysWorkflow,
   createPricePreferencesWorkflow,
@@ -185,14 +185,16 @@ const isDuplicateLinkError = (error: unknown) => {
  * an Ecuador stock location with its own fulfillment set, and a Spanish
  * flat-rate shipping option at 10 USD. Re-running does not create European
  * regions or demo products, and does not duplicate records that already exist.
+ *
+ * This runs from `medusa db:migrate` and from `pnpm seed:ec`. It is not
+ * behind the product-seed guard, so a production migrate can create the
+ * base store. Product and demo seeding stay gated separately.
  */
 export default async function ensureEcuadorStore({
   container,
 }: {
   container: MedusaContainer
 }) {
-  assertSeedAllowed()
-
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
   const link = container.resolve(ContainerRegistrationKeys.LINK)
@@ -846,12 +848,30 @@ async function removeMisplacedEcuadorZones(
   const zoneIds = misplaced.map((zone) => zone.id)
   const { data: options } = await query.graph({
     entity: "shipping_option",
-    fields: ["id", "service_zone_id"],
+    fields: ["id", "name", "service_zone_id"],
     filters: { service_zone_id: zoneIds },
   })
   const optionIds = ((options ?? []) as ShippingOptionRecord[]).map(
     (option) => option.id
   )
+  const optionNames = ((options ?? []) as ShippingOptionRecord[])
+    .map((option) => option.name)
+    .filter((name): name is string => Boolean(name))
+  const zoneNames = misplaced
+    .map((zone) => zone.name)
+    .filter((name): name is string => Boolean(name))
+
+  if (!shouldDeleteMisplacedEcuadorZones()) {
+    logger.warn(
+      [
+        "Dry run: leaving Ecuador-only service zones that belong to another stock location.",
+        `Service zones: ${zoneNames.join(", ") || zoneIds.join(", ")}.`,
+        `Shipping options: ${optionNames.join(", ") || "none"}.`,
+        "Set FIX_EC_ZONES=true to delete them.",
+      ].join(" ")
+    )
+    return
+  }
 
   if (optionIds.length) {
     await deleteShippingOptionsWorkflow(container).run({

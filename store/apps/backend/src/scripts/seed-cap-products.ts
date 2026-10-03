@@ -64,7 +64,8 @@ type InventoryLevelRecord = {
  * Each cap variant tracks inventory at the Ecuador stock location.
  * Stock quantities come only from the data file and are not overwritten
  * when a level already exists. Refuses to run while sku, price, or stock
- * are still TODO, and refuses production unless ALLOW_PROD_SEED=true.
+ * are still TODO. Refuses NODE_ENV=production and a non-local database
+ * host unless ALLOW_PROD_SEED=true.
  */
 export default async function seedCapProducts({ container }: ExecArgs) {
   assertSeedAllowed()
