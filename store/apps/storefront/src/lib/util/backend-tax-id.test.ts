@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
-  applyBillingTaxId,
+  cartCompletionRejection,
+  cartUpdateRejection,
   CONSUMIDOR_FINAL_TAX_ID,
   isValidCedula,
   isValidRuc,
@@ -25,6 +26,10 @@ const SHARED_IDS = [
   "1790085783001",
   "1790085784001",
   "1260004800001",
+  "1760000008",
+  "5000000009",
+  "1760000008001",
+  "1790000080001",
   "9999999999999",
 ]
 
@@ -49,37 +54,109 @@ describe("backend tax id rules", () => {
     }
   })
 
-  it("stores consumidor final as the canonical id", () => {
+  it("rejects a consumidor final number that is not already canonical", () => {
+    const submitted = "1710034065"
     const body = {
       billing_address: {
         city: "Quito",
+        phone: "0991234567",
+        postal_code: null as string | null,
         metadata: {
           tax_id_type: "consumidor_final",
-          tax_id: "1710034065",
+          tax_id: submitted,
           note: "keep",
         },
       },
+    }
+    const before = JSON.stringify(body)
+
+    const message = cartUpdateRejection(body)
+
+    expect(message).toBeTruthy()
+    expect(message).not.toContain(submitted)
+    expect(message).not.toMatch(/\d{6,}/)
+    expect(JSON.stringify(body)).toBe(before)
+  })
+
+  it("rejects shipping invoice keys and a dashed id without rewriting the body", () => {
+    const body = {
+      billing_address: {
+        phone: "0991234567",
+        metadata: {
+          tax_id_type: "cedula",
+          tax_id: "1710-034065",
+        },
+      },
       shipping_address: {
+        phone: "0991234567",
         metadata: { tax_id: "1710034065", tax_id_type: "cedula" },
       },
     }
+    const before = JSON.stringify(body)
 
-    expect(applyBillingTaxId(body)).toBeNull()
-    expect(body.billing_address.metadata).toEqual({
-      tax_id_type: "consumidor_final",
-      tax_id: CONSUMIDOR_FINAL_TAX_ID,
-      note: "keep",
-    })
-    expect(body.shipping_address.metadata).toEqual({})
+    const message = cartUpdateRejection(body)
+
+    expect(message).toBe(
+      "La identificación tributaria no va en la dirección de envío."
+    )
+    expect(JSON.stringify(body)).toBe(before)
+
+    const dashed = {
+      billing_address: {
+        phone: "0991234567",
+        metadata: { tax_id_type: "cedula", tax_id: "1710-034065" },
+      },
+    }
+    const dashedBefore = JSON.stringify(dashed)
+    const dashedMessage = cartUpdateRejection(dashed)
+    expect(dashedMessage).toBeTruthy()
+    expect(dashedMessage).not.toMatch(/\d{6,}/)
+    expect(JSON.stringify(dashed)).toBe(dashedBefore)
+  })
+
+  it("requires a phone and allows an empty postal code", () => {
+    expect(
+      cartUpdateRejection({
+        shipping_address: { city: "Quito", postal_code: null },
+      })
+    ).toBe("Shipping phone is required.")
+    expect(
+      cartUpdateRejection({
+        billing_address: {
+          city: "Quito",
+          postal_code: "",
+          metadata: {
+            tax_id_type: "cedula",
+            tax_id: "1710034065",
+          },
+        },
+      })
+    ).toBe("Billing phone is required.")
+    expect(
+      cartUpdateRejection({
+        region_id: "reg_ec",
+        shipping_address: { phone: "0991234567", postal_code: null },
+        billing_address: {
+          phone: "0991234567",
+          postal_code: null,
+          metadata: {
+            tax_id_type: "consumidor_final",
+            tax_id: CONSUMIDOR_FINAL_TAX_ID,
+          },
+        },
+      })
+    ).toBeNull()
   })
 
   it("leaves a stored id in place when metadata is omitted", () => {
-    expect(applyBillingTaxId({ region_id: "reg_ec" })).toBeNull()
+    expect(cartUpdateRejection({ region_id: "reg_ec" })).toBeNull()
     expect(
-      applyBillingTaxId({ billing_address: { city: "Quito" } })
+      cartUpdateRejection({
+        billing_address: { city: "Quito", phone: "0991234567" },
+      })
     ).toBeNull()
-    const message = applyBillingTaxId({
-      billing_address: { metadata: {} },
+    const message = cartUpdateRejection({
+      billing_address: { phone: "0991234567", metadata: {} },
     })
     expect(message).toBeTruthy()
     expect(message).not.toMatch(/\d{6,}/)
@@ -320,6 +397,47 @@ describe("store response sanitizer", () => {
     expect(sent[5]).toBeUndefined()
     expect(sent[6]).toBe(buffer)
   })
+
+  it("keeps dates as ISO strings and totals as numbers", () => {
+    const createdAt = new Date("2026-03-01T15:04:05.000Z")
+    const total = {
+      numeric_: 12.5,
+      raw_: { value: "12.5" },
+      toJSON() {
+        return 12.5
+      },
+    }
+    const payload = {
+      created_at: createdAt,
+      updated_at: createdAt,
+      total,
+      subtotal: 10,
+      item_total: 0,
+      billing_address: {
+        metadata: {
+          tax_id: "secret-value",
+          tax_id_type: "cedula",
+          note: "keep",
+        },
+      },
+    }
+
+    const stripped = stripPublicTaxIdentifiers(payload)
+
+    expect(stripped.created_at).toBe("2026-03-01T15:04:05.000Z")
+    expect(stripped.updated_at).toBe("2026-03-01T15:04:05.000Z")
+    expect(stripped.total).toBe(12.5)
+    expect(stripped.subtotal).toBe(10)
+    expect(stripped.item_total).toBe(0)
+    expect(stripped.billing_address.metadata).toEqual({
+      note: "keep",
+      tax_id_set: true,
+      tax_id_kind: "identificado",
+    })
+    expect(JSON.stringify(stripped)).not.toContain("numeric_")
+    expect(JSON.stringify(stripped)).not.toContain("secret-value")
+    expect(payload.created_at).toBe(createdAt)
+  })
 })
 
 const TEST_CEDULA = "1710034065"
@@ -378,10 +496,12 @@ describe("store routes do not serialize the cart tax id", () => {
         shipping_address: {
           city: "Quito",
           phone: "0991234567",
-          metadata: { tax_id: taxId, tax_id_type: type },
+          postal_code: null,
         },
       }
-      expect(applyBillingTaxId(update)).toBeNull()
+      const before = JSON.stringify(update)
+      expect(cartUpdateRejection(update)).toBeNull()
+      expect(JSON.stringify(update)).toBe(before)
 
       const cart = { id: "cart_1", email: "ana@example.com", ...update }
       const order = {

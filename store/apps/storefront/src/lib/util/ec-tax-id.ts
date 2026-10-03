@@ -10,43 +10,36 @@ export type TaxIdMetadata = {
   tax_id_type: TaxIdType
 }
 
-const CEDULA_COEFFICIENTS = [2, 1, 2, 1, 2, 1, 2, 1, 2]
-const PUBLIC_RUC_COEFFICIENTS = [3, 2, 7, 6, 5, 4, 3, 2]
-const PRIVATE_RUC_COEFFICIENTS = [4, 3, 2, 7, 6, 5, 4, 3, 2]
+const PUBLIC_RUC_WEIGHTS = [3, 2, 7, 6, 5, 4, 3, 2, 1]
+const PRIVATE_RUC_WEIGHTS = [4, 3, 2, 7, 6, 5, 4, 3, 2, 1]
 
 export function normalizeTaxId(value: string): string {
   return value.replace(/[\s-]/g, "")
 }
 
 function isProvinceCode(digits: string): boolean {
-  const province = Number(digits.slice(0, 2))
-  return (province >= 1 && province <= 24) || province === 30
+  const province = digits.slice(0, 2)
+  return (
+    (province >= "01" && province <= "24") ||
+    province === "30" ||
+    province === "50"
+  )
 }
 
-function module11Matches(
-  digits: string,
-  coefficients: number[],
-  checkIndex: number
-): boolean {
+function weightedSum(digits: string, weights: number[]): number {
   let sum = 0
 
-  for (let index = 0; index < coefficients.length; index++) {
-    sum += Number(digits[index]) * coefficients[index]
+  for (let index = 0; index < weights.length; index++) {
+    sum += Number(digits[index]) * weights[index]
   }
 
-  const residue = sum % 11
-  const expected = residue === 0 ? 0 : 11 - residue
-
-  if (expected === 10) {
-    return false
-  }
-
-  return expected === Number(digits[checkIndex])
+  return sum
 }
 
 /**
- * Ecuadorian cédula: 10 digits, province 01–24 or 30, third digit 0–5,
- * and the módulo 10 check digit.
+ * Ecuadorian cédula, aligned with python-stdnum `ec.ci`:
+ * 10 digits, province 01–24, 30, or 50, third digit 0–6,
+ * módulo 10 over all 10 digits.
  */
 export function isValidCedula(value: string): boolean {
   const cedula = normalizeTaxId(value)
@@ -55,30 +48,45 @@ export function isValidCedula(value: string): boolean {
     return false
   }
 
-  if (Number(cedula[2]) > 5) {
+  if (cedula[2] > "6") {
     return false
   }
 
   let sum = 0
 
-  for (let index = 0; index < CEDULA_COEFFICIENTS.length; index++) {
-    let product = Number(cedula[index]) * CEDULA_COEFFICIENTS[index]
-    if (product >= 10) {
+  for (let index = 0; index < cedula.length; index++) {
+    let product = (index % 2 === 0 ? 2 : 1) * Number(cedula[index])
+    if (product > 9) {
       product -= 9
     }
     sum += product
   }
 
-  const residue = sum % 10
-  const expected = residue === 0 ? 0 : 10 - residue
+  return sum % 10 === 0
+}
 
-  return expected === Number(cedula[9])
+function isPublicRuc(ruc: string): boolean {
+  return (
+    ruc.slice(-4) !== "0000" && weightedSum(ruc, PUBLIC_RUC_WEIGHTS) % 11 === 0
+  )
+}
+
+function isPrivateRuc(ruc: string): boolean {
+  return (
+    ruc.slice(-3) !== "000" &&
+    weightedSum(ruc.slice(0, 10), PRIVATE_RUC_WEIGHTS) % 11 === 0
+  )
+}
+
+function isNaturalRuc(ruc: string): boolean {
+  return ruc.slice(-3) !== "000" && isValidCedula(ruc.slice(0, 10))
 }
 
 /**
- * Ecuadorian RUC: 13 digits. Natural persons reuse the cédula check;
- * public institutions (third digit 6) and private companies (third digit 9)
- * use módulo 11. The establishment suffix cannot be all zeroes.
+ * Ecuadorian RUC, aligned with python-stdnum `ec.ruc`.
+ * Third digit 0–5 is a natural person. Third digit 6 is a public entity
+ * or a natural person. Third digit 9 is a public entity or a private company.
+ * The establishment suffix cannot be all zeroes.
  */
 export function isValidRuc(value: string): boolean {
   const ruc = normalizeTaxId(value)
@@ -87,24 +95,18 @@ export function isValidRuc(value: string): boolean {
     return false
   }
 
-  const third = Number(ruc[2])
+  const third = ruc[2]
 
-  if (third <= 5) {
-    return isValidCedula(ruc.slice(0, 10)) && ruc.slice(10) !== "000"
+  if (third < "6") {
+    return isNaturalRuc(ruc)
   }
 
-  if (third === 6) {
-    return (
-      module11Matches(ruc, PUBLIC_RUC_COEFFICIENTS, 8) &&
-      ruc.slice(9) !== "0000"
-    )
+  if (third === "6") {
+    return isPublicRuc(ruc) || isNaturalRuc(ruc)
   }
 
-  if (third === 9) {
-    return (
-      module11Matches(ruc, PRIVATE_RUC_COEFFICIENTS, 9) &&
-      ruc.slice(10) !== "000"
-    )
+  if (third === "9") {
+    return isPublicRuc(ruc) || isPrivateRuc(ruc)
   }
 
   return false

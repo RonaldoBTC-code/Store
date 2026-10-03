@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { cartUpdateRejection } from "../../../../backend/src/utils/ec-tax-id"
 import { CONSUMIDOR_FINAL_TAX_ID } from "../util/ec-tax-id"
 import { checkoutAddressesFromForm } from "./checkout-addresses"
 
@@ -48,6 +49,7 @@ describe("checkoutAddressesFromForm", () => {
         tax_id_type: "cedula",
       },
     })
+    expect(cartUpdateRejection(update)).toBeNull()
   })
 
   it("keeps a provided postal code and a separate billing phone", () => {

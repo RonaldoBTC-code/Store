@@ -18,40 +18,37 @@ export type TaxIdMetadata = {
   tax_id_type: TaxIdType
 }
 
-const CEDULA_COEFFICIENTS = [2, 1, 2, 1, 2, 1, 2, 1, 2]
-const PUBLIC_RUC_COEFFICIENTS = [3, 2, 7, 6, 5, 4, 3, 2]
-const PRIVATE_RUC_COEFFICIENTS = [4, 3, 2, 7, 6, 5, 4, 3, 2]
+const PUBLIC_RUC_WEIGHTS = [3, 2, 7, 6, 5, 4, 3, 2, 1]
+const PRIVATE_RUC_WEIGHTS = [4, 3, 2, 7, 6, 5, 4, 3, 2, 1]
 
 export function normalizeTaxId(value: string): string {
   return value.replace(/[\s-]/g, "")
 }
 
 function isProvinceCode(digits: string): boolean {
-  const province = Number(digits.slice(0, 2))
-  return (province >= 1 && province <= 24) || province === 30
+  const province = digits.slice(0, 2)
+  return (
+    (province >= "01" && province <= "24") ||
+    province === "30" ||
+    province === "50"
+  )
 }
 
-function module11Matches(
-  digits: string,
-  coefficients: number[],
-  checkIndex: number
-): boolean {
+function weightedSum(digits: string, weights: number[]): number {
   let sum = 0
 
-  for (let index = 0; index < coefficients.length; index++) {
-    sum += Number(digits[index]) * coefficients[index]
+  for (let index = 0; index < weights.length; index++) {
+    sum += Number(digits[index]) * weights[index]
   }
 
-  const residue = sum % 11
-  const expected = residue === 0 ? 0 : 11 - residue
-
-  if (expected === 10) {
-    return false
-  }
-
-  return expected === Number(digits[checkIndex])
+  return sum
 }
 
+/**
+ * Ecuadorian cédula, aligned with python-stdnum `ec.ci`:
+ * 10 digits, province 01–24, 30, or 50, third digit 0–6,
+ * módulo 10 over all 10 digits.
+ */
 export function isValidCedula(value: string): boolean {
   const cedula = normalizeTaxId(value)
 
@@ -59,26 +56,46 @@ export function isValidCedula(value: string): boolean {
     return false
   }
 
-  if (Number(cedula[2]) > 5) {
+  if (cedula[2] > "6") {
     return false
   }
 
   let sum = 0
 
-  for (let index = 0; index < CEDULA_COEFFICIENTS.length; index++) {
-    let product = Number(cedula[index]) * CEDULA_COEFFICIENTS[index]
-    if (product >= 10) {
+  for (let index = 0; index < cedula.length; index++) {
+    let product = (index % 2 === 0 ? 2 : 1) * Number(cedula[index])
+    if (product > 9) {
       product -= 9
     }
     sum += product
   }
 
-  const residue = sum % 10
-  const expected = residue === 0 ? 0 : 10 - residue
-
-  return expected === Number(cedula[9])
+  return sum % 10 === 0
 }
 
+function isPublicRuc(ruc: string): boolean {
+  return (
+    ruc.slice(-4) !== "0000" && weightedSum(ruc, PUBLIC_RUC_WEIGHTS) % 11 === 0
+  )
+}
+
+function isPrivateRuc(ruc: string): boolean {
+  return (
+    ruc.slice(-3) !== "000" &&
+    weightedSum(ruc.slice(0, 10), PRIVATE_RUC_WEIGHTS) % 11 === 0
+  )
+}
+
+function isNaturalRuc(ruc: string): boolean {
+  return ruc.slice(-3) !== "000" && isValidCedula(ruc.slice(0, 10))
+}
+
+/**
+ * Ecuadorian RUC, aligned with python-stdnum `ec.ruc`.
+ * Third digit 0–5 is a natural person. Third digit 6 is a public entity
+ * or a natural person. Third digit 9 is a public entity or a private company.
+ * The establishment suffix cannot be all zeroes.
+ */
 export function isValidRuc(value: string): boolean {
   const ruc = normalizeTaxId(value)
 
@@ -86,24 +103,18 @@ export function isValidRuc(value: string): boolean {
     return false
   }
 
-  const third = Number(ruc[2])
+  const third = ruc[2]
 
-  if (third <= 5) {
-    return isValidCedula(ruc.slice(0, 10)) && ruc.slice(10) !== "000"
+  if (third < "6") {
+    return isNaturalRuc(ruc)
   }
 
-  if (third === 6) {
-    return (
-      module11Matches(ruc, PUBLIC_RUC_COEFFICIENTS, 8) &&
-      ruc.slice(9) !== "0000"
-    )
+  if (third === "6") {
+    return isPublicRuc(ruc) || isNaturalRuc(ruc)
   }
 
-  if (third === 9) {
-    return (
-      module11Matches(ruc, PRIVATE_RUC_COEFFICIENTS, 9) &&
-      ruc.slice(10) !== "000"
-    )
+  if (third === "9") {
+    return isPublicRuc(ruc) || isPrivateRuc(ruc)
   }
 
   return false
@@ -117,91 +128,120 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>
 }
 
-function parseTaxId(typeRaw: string, idRaw: string): TaxIdMetadata {
-  const type = typeRaw.trim()
+const SHIPPING_TAX_MESSAGE =
+  "La identificación tributaria no va en la dirección de envío."
+const CONSUMIDOR_FINAL_MESSAGE = "Consumidor final no lleva otro número."
 
-  if (type === "consumidor_final") {
-    return {
-      tax_id_type: "consumidor_final",
-      tax_id: CONSUMIDOR_FINAL_TAX_ID,
-    }
-  }
-
-  if (type !== "cedula" && type !== "ruc") {
-    throw new Error("Elige cédula, RUC o consumidor final.")
-  }
-
-  const taxId = normalizeTaxId(idRaw)
-
-  if (type === "cedula" && !isValidCedula(taxId)) {
-    throw new Error("La cédula no es válida. Revisa que tenga 10 dígitos.")
-  }
-
-  if (type === "ruc" && !isValidRuc(taxId)) {
-    throw new Error("El RUC no es válido. Revisa que tenga 13 dígitos.")
-  }
-
-  return { tax_id_type: type, tax_id: taxId }
-}
-
-export function normalizeTaxMetadata(
-  metadata: unknown
-): { ok: true; metadata: TaxIdMetadata } | { ok: false; message: string } {
+function invoiceKeysPresent(metadata: unknown): boolean {
   const record = asRecord(metadata)
   if (!record) {
-    return { ok: false, message: TAX_ID_REQUIRED_MESSAGE }
+    return false
+  }
+
+  return (
+    Object.prototype.hasOwnProperty.call(record, "tax_id") ||
+    Object.prototype.hasOwnProperty.call(record, "tax_id_type")
+  )
+}
+
+/**
+ * Accepts only an invoice id that is already normalized.
+ * Does not strip dashes, rewrite consumidor final, or change the object.
+ */
+export function invoiceMetadataRejection(metadata: unknown): string | null {
+  const record = asRecord(metadata)
+  if (!record) {
+    return TAX_ID_REQUIRED_MESSAGE
   }
 
   const type = record.tax_id_type
   const id = record.tax_id
 
-  try {
-    return {
-      ok: true,
-      metadata: parseTaxId(
-        typeof type === "string" ? type : "",
-        typeof id === "string" ? id : ""
-      ),
-    }
-  } catch (error) {
-    const message =
-      error instanceof Error && error.message
-        ? error.message
-        : TAX_ID_REQUIRED_MESSAGE
+  if (typeof type !== "string" || typeof id !== "string") {
+    return TAX_ID_REQUIRED_MESSAGE
+  }
 
-    if (/\d{6,}/.test(message)) {
-      return { ok: false, message: TAX_ID_REQUIRED_MESSAGE }
-    }
+  if (type === "consumidor_final") {
+    return id === CONSUMIDOR_FINAL_TAX_ID ? null : CONSUMIDOR_FINAL_MESSAGE
+  }
 
+  if (type !== "cedula" && type !== "ruc") {
+    return "Elige cédula, RUC o consumidor final."
+  }
+
+  const digits = type === "cedula" ? /^\d{10}$/ : /^\d{13}$/
+  const valid = type === "cedula" ? isValidCedula(id) : isValidRuc(id)
+
+  if (!digits.test(id) || !valid) {
+    return type === "cedula"
+      ? "La cédula no es válida. Revisa que tenga 10 dígitos."
+      : "El RUC no es válido. Revisa que tenga 13 dígitos."
+  }
+
+  return null
+}
+
+export function normalizeTaxMetadata(
+  metadata: unknown
+): { ok: true; metadata: TaxIdMetadata } | { ok: false; message: string } {
+  const message = invoiceMetadataRejection(metadata)
+  if (message) {
     return { ok: false, message }
+  }
+
+  const record = asRecord(metadata) as {
+    tax_id: string
+    tax_id_type: TaxIdType
+  }
+
+  return {
+    ok: true,
+    metadata: {
+      tax_id: record.tax_id,
+      tax_id_type: record.tax_id_type,
+    },
   }
 }
 
-function stripTaxKeys(metadata: unknown): void {
-  const record = asRecord(metadata)
-  if (!record) {
-    return
+function phoneRejection(
+  address: Record<string, unknown>,
+  which: "Shipping" | "Billing"
+): string | null {
+  const phone = address.phone
+  if (typeof phone !== "string" || phone.trim() === "") {
+    return which === "Shipping"
+      ? "Shipping phone is required."
+      : "Billing phone is required."
   }
 
-  delete record.tax_id
-  delete record.tax_id_type
+  return null
 }
 
 /**
- * When a cart update includes a billing address, require a valid invoice id
- * and store only the normalized value. Returns an error message, or null.
- * The message never contains the submitted number.
+ * Route and updateCartWorkflow gate. Returns an error message, or null.
+ * The body is not modified: Medusa persists the validated copy, not this object
+ * after a middleware rewrite.
  */
-export function applyBillingTaxId(body: unknown): string | null {
+export function cartUpdateRejection(body: unknown): string | null {
   const record = asRecord(body)
   if (!record) {
     return null
   }
 
   if (Object.prototype.hasOwnProperty.call(record, "shipping_address")) {
-    const shipping = asRecord(record.shipping_address)
-    if (shipping) {
-      stripTaxKeys(shipping.metadata)
+    const shipping = record.shipping_address
+    if (shipping !== null && shipping !== undefined) {
+      const address = asRecord(shipping)
+      if (!address) {
+        return "Shipping phone is required."
+      }
+      if (invoiceKeysPresent(address.metadata)) {
+        return SHIPPING_TAX_MESSAGE
+      }
+      const phone = phoneRejection(address, "Shipping")
+      if (phone) {
+        return phone
+      }
     }
   }
 
@@ -209,26 +249,45 @@ export function applyBillingTaxId(body: unknown): string | null {
     return null
   }
 
-  const address = asRecord(record.billing_address)
-  if (!address) {
+  const billing = asRecord(record.billing_address)
+  if (!billing) {
     return TAX_ID_REQUIRED_MESSAGE
   }
 
-  // Omitting metadata leaves the stored invoice id in place. The browser
-  // does not keep the number, so a later address edit can resubmit without it.
-  if (!Object.prototype.hasOwnProperty.call(address, "metadata")) {
+  const phone = phoneRejection(billing, "Billing")
+  if (phone) {
+    return phone
+  }
+
+  // Omitting metadata leaves the stored invoice id in place.
+  if (!Object.prototype.hasOwnProperty.call(billing, "metadata")) {
     return null
   }
 
-  const normalized = normalizeTaxMetadata(address.metadata)
-  if (!normalized.ok) {
-    return normalized.message
+  return invoiceMetadataRejection(billing.metadata)
+}
+
+/**
+ * completeCartWorkflow gate. The cart argument is the snapshot the workflow
+ * already loaded, which is what the order is built from.
+ */
+export function cartCompletionRejection(cart: unknown): string | null {
+  const record = asRecord(cart)
+  if (!record) {
+    return "The cart could not be completed."
   }
 
-  const metadata = asRecord(address.metadata) ?? {}
-  address.metadata = {
-    ...metadata,
-    ...normalized.metadata,
+  const message = cartUpdateRejection({
+    shipping_address: record.shipping_address,
+    billing_address: record.billing_address,
+  })
+  if (message) {
+    return message
+  }
+
+  const billing = asRecord(record.billing_address)
+  if (!billing || !Object.prototype.hasOwnProperty.call(billing, "metadata")) {
+    return TAX_ID_REQUIRED_MESSAGE
   }
 
   return null

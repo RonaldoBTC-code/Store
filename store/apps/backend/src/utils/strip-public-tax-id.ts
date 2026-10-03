@@ -8,7 +8,18 @@ const TAX_KEYS = ["tax_id", "tax_id_type"] as const
  * Admin routes are not passed through `sanitizeStoreResponse`.
  */
 export function stripPublicTaxIdentifiers<T>(value: T): T {
-  return walk(value) as T
+  if (value === undefined) {
+    return value
+  }
+
+  // JSON.stringify honors Date and toJSON before we walk. Rebuilding a Date
+  // or a BigNumber field by field turns created_at into {} and leaks totals.
+  const serialized = JSON.stringify(value)
+  if (typeof serialized !== "string") {
+    return value
+  }
+
+  return walk(JSON.parse(serialized)) as T
 }
 
 export function isStoreApiPath(path: string): boolean {

@@ -1,6 +1,11 @@
 import type { MedusaContainer } from "@medusajs/framework/types"
 import { Modules } from "@medusajs/framework/utils"
-import { purgeAbandonedCartInvoiceIds } from "./purge-abandoned-cart-tax-ids"
+import {
+  purgeAbandonedCartInvoiceIds,
+  type AbandonedCartFilters,
+  type AbandonedCartRecord,
+  type InvoiceIdRemoval,
+} from "./purge-abandoned-cart-tax-ids"
 
 /**
  * Daily LOPDP retention: invoice ids stay on orders for SRI invoicing and are
@@ -10,22 +15,19 @@ import { purgeAbandonedCartInvoiceIds } from "./purge-abandoned-cart-tax-ids"
 export default async function purgeAbandonedCartInvoiceIdsJob(
   container: MedusaContainer
 ) {
-  const cartModule = container.resolve(Modules.CART) as {
+  const cartModule = container.resolve(Modules.CART) as unknown as {
     listCarts: (
-      filters: unknown,
-      config: unknown
-    ) => Promise<unknown[]>
-    updateCarts: (id: string, data: unknown) => Promise<unknown>
+      filters: AbandonedCartFilters,
+      config: { take: number; skip: number; relations: string[] }
+    ) => Promise<AbandonedCartRecord[]>
+    updateCarts: (id: string, data: InvoiceIdRemoval) => Promise<unknown>
   }
   const logger = container.resolve("logger") as {
     info: (message: string) => void
   }
 
   await purgeAbandonedCartInvoiceIds({
-    listCarts: (filters, config) =>
-      cartModule.listCarts(filters, config) as ReturnType<
-        typeof cartModule.listCarts
-      >,
+    listCarts: (filters, config) => cartModule.listCarts(filters, config),
     updateCarts: (id, data) => cartModule.updateCarts(id, data),
     log: (message) => logger.info(message),
   })

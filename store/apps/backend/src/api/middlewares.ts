@@ -4,7 +4,10 @@ import {
   type MedusaRequest,
   type MedusaResponse,
 } from "@medusajs/framework/http"
-import { applyBillingTaxId, normalizeTaxMetadata } from "../utils/ec-tax-id"
+import {
+  cartCompletionRejection,
+  cartUpdateRejection,
+} from "../utils/ec-tax-id"
 import { installStoreTaxIdSanitizer } from "../utils/strip-public-tax-id"
 
 const CART_COMPLETION_REJECTION = {
@@ -31,7 +34,7 @@ function validateTaxIdOnCartUpdate(
   res: MedusaResponse,
   next: MedusaNextFunction
 ) {
-  const message = applyBillingTaxId(req.body)
+  const message = cartUpdateRejection(req.body)
   if (message) {
     res.status(400).json({ type: "invalid_data", message })
     return
@@ -53,12 +56,12 @@ async function validateTaxIdOnCartComplete(
       ) => Promise<{ billing_address?: { metadata?: unknown } | null }>
     }
     const cart = await cartService.retrieveCart(req.params.id, {
-      relations: ["billing_address"],
+      relations: ["billing_address", "shipping_address"],
     })
-    const normalized = normalizeTaxMetadata(cart.billing_address?.metadata)
+    const message = cartCompletionRejection(cart)
 
-    if (!normalized.ok) {
-      res.status(400).json({ type: "invalid_data", message: normalized.message })
+    if (message) {
+      res.status(400).json({ type: "invalid_data", message })
       return
     }
 
