@@ -25,7 +25,7 @@ export type StoredInvoicePayment = {
 
 export interface BtcpayPaymentStore {
   tryAcquire(input: AcquireInput): Promise<AcquireResult>
-  commitInvoice(input: CommitInvoiceInput): Promise<void>
+  commitInvoice(input: CommitInvoiceInput): Promise<boolean>
   abort(id: string): Promise<void>
   findByInvoice(invoiceId: string): Promise<StoredInvoicePayment | null>
   close(
@@ -64,15 +64,16 @@ export class MemoryBtcpayPaymentStore implements BtcpayPaymentStore {
     })
   }
 
-  async commitInvoice(input: CommitInvoiceInput): Promise<void> {
+  async commitInvoice(input: CommitInvoiceInput): Promise<boolean> {
     const row = this.rows.find((entry) => entry.id === input.id)
-    if (!row) {
-      return
+    if (!row || row.status !== "holding") {
+      return false
     }
     row.invoiceId = input.invoiceId
     row.expiresAt = input.expiresAt
     row.reservationIds = input.reservationIds
     row.status = "pending"
+    return true
   }
 
   async abort(id: string): Promise<void> {
@@ -99,7 +100,7 @@ export class MemoryBtcpayPaymentStore implements BtcpayPaymentStore {
     status: Exclude<PaymentStatus, "holding" | "pending">
   ): Promise<string[]> {
     const row = this.rows.find((entry) => entry.invoiceId === invoiceId)
-    if (!row) {
+    if (!row || (row.status !== "holding" && row.status !== "pending")) {
       return []
     }
     const reservationIds = row.reservationIds

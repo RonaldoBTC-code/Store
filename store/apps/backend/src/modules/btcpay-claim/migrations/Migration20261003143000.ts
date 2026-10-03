@@ -1,19 +1,19 @@
 import { Migration } from "@medusajs/framework/mikro-orm/migrations"
-import { migration143000Down, migration143000Up } from "./sql"
+import { btcpayMigrationDown, btcpayMigrationUp } from "./sql"
 
 /**
- * One row per BTCPay invoice. The unique index is what makes a webhook and
- * the shopper's return confirmation settle the same invoice once.
+ * BTCPay claim and payment tables in their final shape: integer cents,
+ * hashed session id, one open invoice per cart, and one row per invoice id.
  */
 export class Migration20261003143000 extends Migration {
   override async up(): Promise<void> {
-    for (const sql of migration143000Up) {
+    for (const sql of btcpayMigrationUp) {
       this.addSql(sql)
     }
   }
 
   override async down(): Promise<void> {
-    for (const sql of migration143000Down) {
+    for (const sql of btcpayMigrationDown) {
       this.addSql(sql)
     }
   }

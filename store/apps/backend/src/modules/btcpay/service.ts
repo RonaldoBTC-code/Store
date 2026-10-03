@@ -508,12 +508,19 @@ export default class BtcpayPaymentProviderService extends AbstractPaymentProvide
         units,
       })
       const expiresAt = invoiceExpiry(invoice.expirationTime)
-      await store.commitInvoice({
+      const stored = await store.commitInvoice({
         id: acquired.id,
         invoiceId: invoice.id,
         expiresAt,
         reservationIds,
       })
+      if (!stored) {
+        this.logger_.warn("BTCPay confirmation rejected: payment_not_holding")
+        throw new MedusaError(
+          MedusaError.Types.NOT_ALLOWED,
+          "BTCPay invoice could not be stored."
+        )
+      }
       return {
         id: invoice.id,
         invoice_id: invoice.id,

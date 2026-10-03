@@ -11,7 +11,7 @@ import {
   PaymentStatus,
   PERSONAL_DATA_RETENTION_MS,
 } from "./limits"
-import { AcquireResult } from "./payment-store"
+import { AcquireResult, CommitInvoiceInput } from "./payment-store"
 
 export type SqlTx = {
   query<Row extends Record<string, unknown> = Record<string, unknown>>(
@@ -158,12 +158,33 @@ export async function abortHoldingPayment(tx: SqlTx, id: string): Promise<void> 
   )
 }
 
+export class PaymentNotOpenError extends Error {
+  constructor() {
+    super("BTCPay payment row was not open")
+    this.name = "PaymentNotOpenError"
+  }
+}
+
 /**
- * Inserts the invoice claim and marks the payment settled.
+ * Marks an open payment settled, then inserts the claim.
+ * Zero updated rows abort the transaction so no claim is left behind.
  * A unique violation means the webhook and the return confirmation raced.
  */
 export async function confirmSettlement(tx: SqlTx, input: ClaimRowInput): Promise<void> {
   assertInteger(input.amountCents, "amount_cents")
+  const updated = await tx.query(
+    `UPDATE "btcpay_payment"
+     SET "status" = 'settled', "reservation_ids" = '{"ids":[]}'::jsonb, "updated_at" = now()
+     WHERE "deleted_at" IS NULL
+       AND "provider" = ?
+       AND "invoice_id" = ?
+       AND "status" IN (${OPEN_STATUS_SQL})
+     RETURNING "id"`,
+    [BTCPAY_PROVIDER, input.invoiceId]
+  )
+  if (!updated.length) {
+    throw new PaymentNotOpenError()
+  }
   await tx.query(
     `INSERT INTO "btcpay_invoice_claim" (
       "id", "invoice_id", "cart_id", "payment_session_hash", "amount_cents",
@@ -178,15 +199,67 @@ export async function confirmSettlement(tx: SqlTx, input: ClaimRowInput): Promis
       input.currencyCode,
     ]
   )
-  await tx.query(
+}
+
+/**
+ * Stores the invoice on a holding row. Zero rows means the hold already
+ * expired or was canceled, and the row is left as it is.
+ */
+export async function commitOpenInvoice(
+  tx: SqlTx,
+  input: CommitInvoiceInput
+): Promise<boolean> {
+  const rows = await tx.query(
     `UPDATE "btcpay_payment"
-     SET "status" = 'settled', "reservation_ids" = '{"ids":[]}'::jsonb, "updated_at" = now()
-     WHERE "deleted_at" IS NULL
-       AND "provider" = ?
-       AND "invoice_id" = ?
-       AND "status" IN (${OPEN_STATUS_SQL})`,
-    [BTCPAY_PROVIDER, input.invoiceId]
+     SET "invoice_id" = ?,
+         "expires_at" = ?,
+         "reservation_ids" = ?::jsonb,
+         "status" = 'pending',
+         "updated_at" = now()
+     WHERE "id" = ?
+       AND "status" = 'holding'
+       AND "deleted_at" IS NULL
+     RETURNING "id"`,
+    [
+      input.invoiceId,
+      input.expiresAt,
+      JSON.stringify({ ids: input.reservationIds }),
+      input.id,
+    ]
   )
+  return rows.length > 0
+}
+
+/**
+ * Closes only an open row and returns the reservation ids it had before.
+ * A settled, expired, invalid, or canceled row is not updated.
+ */
+export async function closeOpenPayment(
+  tx: SqlTx,
+  invoiceId: string,
+  status: Exclude<PaymentStatus, "holding" | "pending">
+): Promise<string[]> {
+  const rows = await tx.query<{ reservation_ids: unknown }>(
+    `UPDATE "btcpay_payment" AS payment
+     SET "status" = ?,
+         "reservation_ids" = '{"ids":[]}'::jsonb,
+         "updated_at" = now()
+     FROM (
+       SELECT "id", "reservation_ids"
+       FROM "btcpay_payment"
+       WHERE "deleted_at" IS NULL
+         AND "provider" = ?
+         AND "invoice_id" = ?
+         AND "status" IN (${OPEN_STATUS_SQL})
+     ) AS previous
+     WHERE payment."id" = previous."id"
+     RETURNING previous."reservation_ids" AS "reservation_ids"`,
+    [status, BTCPAY_PROVIDER, invoiceId]
+  )
+  if (!rows.length) {
+    return []
+  }
+  return readReservationIds(rows[0].reservation_ids)
 }
 
 export async function redactClosedPersonalData(tx: SqlTx, now: Date): Promise<number> {
@@ -324,6 +397,15 @@ function assertInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${label} must be a non-negative integer`)
   }
+}
+
+function readReservationIds(value: unknown): string[] {
+  const list = Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && Array.isArray((value as { ids?: unknown }).ids)
+      ? (value as { ids: unknown[] }).ids
+      : []
+  return list.filter((entry): entry is string => typeof entry === "string")
 }
 
 function newId(prefix: string): string {

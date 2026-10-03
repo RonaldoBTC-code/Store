@@ -38,6 +38,7 @@ const Payment = ({
 
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pendingPaymentLink, setPendingPaymentLink] = useState<string | null>(null)
   const [paymentComplete, setPaymentComplete] = useState(false)
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(
     activeSession?.provider_id ?? ""
@@ -52,6 +53,7 @@ const Payment = ({
 
   const setPaymentMethod = async (method: string) => {
     setError(null)
+    setPendingPaymentLink(null)
     setSelectedPaymentMethod(method)
     if (isStripeLike(method)) {
       await initiatePaymentSession(cart, {
@@ -127,7 +129,11 @@ const Payment = ({
         )
       }
     } catch (err) {
-      setError(checkoutErrorMessage(err))
+      const message = checkoutErrorMessage(err)
+      setError(message)
+      setPendingPaymentLink(
+        message === BTCPAY_PENDING_LIMIT_MESSAGE ? sameCartCheckoutLink(cart) : null
+      )
     } finally {
       setIsLoading(false)
     }
@@ -135,6 +141,7 @@ const Payment = ({
 
   useEffect(() => {
     setError(null)
+    setPendingPaymentLink(null)
   }, [isOpen])
 
   return (
@@ -219,6 +226,15 @@ const Payment = ({
             error={error}
             data-testid="payment-method-error-message"
           />
+          {pendingPaymentLink ? (
+            <a
+              href={pendingPaymentLink}
+              className="txt-medium mt-2 inline-block underline"
+              data-testid="btcpay-open-pending-payment"
+            >
+              Abrir el pago pendiente
+            </a>
+          ) : null}
 
           <Button
             size="large"
@@ -289,6 +305,28 @@ const Payment = ({
       <Divider className="mt-8" />
     </div>
   )
+}
+
+function sameCartCheckoutLink(cart: HttpTypes.StoreCart): string | null {
+  const sessions = cart.payment_collection?.payment_sessions ?? []
+  for (const session of sessions) {
+    if (!isBtcpay(session.provider_id)) {
+      continue
+    }
+    const data = (session.data ?? {}) as Record<string, unknown>
+    if (data.cart_id !== cart.id || typeof data.checkout_link !== "string") {
+      continue
+    }
+    try {
+      const url = new URL(data.checkout_link)
+      if (url.protocol === "https:" || url.protocol === "http:") {
+        return url.toString()
+      }
+    } catch {
+      continue
+    }
+  }
+  return null
 }
 
 function checkoutErrorMessage(err: unknown) {

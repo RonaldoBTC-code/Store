@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "crypto"
-import { migration170000Up } from "../../btcpay-claim/migrations/sql"
+import { btcpayMigrationUp } from "../../btcpay-claim/migrations/sql"
 import {
   hashClientIp,
   hashPersonal,
@@ -59,7 +59,7 @@ describe("BTCPay personal data hashes", () => {
   })
 
   it("uses holding and pending as the open statuses in the cart unique index", () => {
-    const sql = migration170000Up.join("\n")
+    const sql = btcpayMigrationUp.join("\n")
     expect(OPEN_PAYMENT_STATUSES).toEqual(["holding", "pending"])
     expect(sql).toContain("status IN ('holding', 'pending')")
     expect(sql).toContain(

@@ -18,6 +18,8 @@ import { registerBtcpayPaymentStore } from "../btcpay/payment-registry"
 import {
   abortHoldingPayment,
   acquirePaymentSlot,
+  closeOpenPayment,
+  commitOpenInvoice,
   confirmSettlement,
   DbManager,
   mikroTx,
@@ -136,7 +138,16 @@ class BtcpayClaimModuleService
     return manager.transactional(async (tx) => redactClosedPersonalData(mikroTx(tx), now))
   }
 
-  async commitInvoice(input: CommitInvoiceInput) {
+  async commitInvoice(input: CommitInvoiceInput): Promise<boolean> {
+    const manager = this.db_
+    if (manager?.transactional) {
+      return manager.transactional(async (tx) => commitOpenInvoice(mikroTx(tx), input))
+    }
+    const rows = await this.listBtcpayPayments({ id: input.id })
+    const row = rows[0]
+    if (row?.status !== "holding") {
+      return false
+    }
     await this.updateBtcpayPayments({
       id: input.id,
       invoice_id: input.invoiceId,
@@ -144,6 +155,7 @@ class BtcpayClaimModuleService
       reservation_ids: { ids: input.reservationIds },
       status: "pending",
     })
+    return true
   }
 
   async abort(id: string) {
@@ -189,8 +201,19 @@ class BtcpayClaimModuleService
     invoiceId: string,
     status: Exclude<PaymentStatus, "holding" | "pending">
   ) {
-    const rows = await this.listBtcpayPayments({ invoice_id: invoiceId })
-    const row = rows[0]
+    const manager = this.db_
+    if (manager?.transactional) {
+      return manager.transactional(async (tx) =>
+        closeOpenPayment(mikroTx(tx), invoiceId, status)
+      )
+    }
+    const rows = await this.listBtcpayPayments({
+      provider: BTCPAY_PROVIDER,
+      invoice_id: invoiceId,
+    })
+    const row = rows.find(
+      (entry) => entry.status === "holding" || entry.status === "pending"
+    )
     if (!row) {
       return []
     }

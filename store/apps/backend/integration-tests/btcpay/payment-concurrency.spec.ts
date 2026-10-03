@@ -2,17 +2,17 @@ import { isUniqueViolation } from "../../src/modules/btcpay/claim"
 import { hashClientIp, hashSessionId } from "../../src/modules/btcpay/limits"
 import {
   acquirePaymentSlot,
+  closeOpenPayment,
+  commitOpenInvoice,
   confirmSettlement,
   newClaimId,
+  PaymentNotOpenError,
   pgTx,
   redactClosedPersonalData,
 } from "../../src/modules/btcpay/payment-sql"
 import {
-  migration143000Up,
-  migration160000Down,
-  migration160000Up,
-  migration170000Down,
-  migration170000Up,
+  btcpayMigrationDown,
+  btcpayMigrationUp,
 } from "../../src/modules/btcpay-claim/migrations/sql"
 
 const SECRET = "server-secret"
@@ -82,11 +82,7 @@ describe("BTCPay Postgres constraints", () => {
     pool = createPool(DATABASE_URL)
     await pool.query(`DROP TABLE IF EXISTS "btcpay_payment" CASCADE`)
     await pool.query(`DROP TABLE IF EXISTS "btcpay_invoice_claim" CASCADE`)
-    await runAll(pool, [
-      ...migration143000Up,
-      ...migration160000Up,
-      ...migration170000Up,
-    ])
+    await runAll(pool, btcpayMigrationUp)
   })
 
   afterAll(async () => {
@@ -286,52 +282,169 @@ describe("BTCPay Postgres constraints", () => {
     expect(claim.rows[0].payment_session_hash).toBeNull()
   })
 
-  it("reverses the constraint migration and applies it again", async () => {
+  it("returns the reservations an open invoice had before close", async () => {
+    const invoiceId = "inv_open_close"
+    const client = await pool.connect()
+    let released: string[] = []
     try {
-      await runAll(pool, migration170000Down)
-      const downColumns = await pool.query(
+      await client.query("BEGIN")
+      const acquired = await acquirePaymentSlot(
+        pgTx(client),
+        acquireInput({ cartId: "cart_open_close", sessionId: "payses_open_close" })
+      )
+      expect(acquired.ok).toBe(true)
+      if (!acquired.ok) {
+        return
+      }
+      const stored = await commitOpenInvoice(pgTx(client), {
+        id: acquired.id,
+        invoiceId,
+        expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+        reservationIds: ["res_a", "res_b"],
+      })
+      expect(stored).toBe(true)
+      released = await closeOpenPayment(pgTx(client), invoiceId, "expired")
+      await client.query("COMMIT")
+    } finally {
+      client.release()
+    }
+
+    expect(released).toEqual(["res_a", "res_b"])
+    const row = await pool.query(
+      `SELECT "status", "reservation_ids" FROM "btcpay_payment" WHERE "invoice_id" = $1`,
+      [invoiceId]
+    )
+    expect(row.rows[0].status).toBe("expired")
+    expect(row.rows[0].reservation_ids).toEqual({ ids: [] })
+  })
+
+  it("keeps a settled payment settled when a later expired close arrives", async () => {
+    const invoiceId = "inv_late_expired"
+    const client = await pool.connect()
+    try {
+      await client.query("BEGIN")
+      const acquired = await acquirePaymentSlot(
+        pgTx(client),
+        acquireInput({ cartId: "cart_late", sessionId: "payses_late" })
+      )
+      expect(acquired.ok).toBe(true)
+      if (!acquired.ok) {
+        return
+      }
+      const stored = await commitOpenInvoice(pgTx(client), {
+        id: acquired.id,
+        invoiceId,
+        expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+        reservationIds: ["res_keep"],
+      })
+      expect(stored).toBe(true)
+      await confirmSettlement(pgTx(client), {
+        id: newClaimId(),
+        invoiceId,
+        cartId: "cart_late",
+        paymentSessionHash: hashSessionId("payses_late", SECRET),
+        amountCents: 2500,
+        currencyCode: "usd",
+      })
+      await client.query(
+        `UPDATE "btcpay_payment"
+         SET "reservation_ids" = '{"ids":["res_keep"]}'::jsonb
+         WHERE "invoice_id" = $1`,
+        [invoiceId]
+      )
+      await client.query("COMMIT")
+    } finally {
+      client.release()
+    }
+
+    const closed = await pool.connect()
+    try {
+      await closed.query("BEGIN")
+      const released = await closeOpenPayment(pgTx(closed), invoiceId, "expired")
+      await closed.query("COMMIT")
+      expect(released).toEqual([])
+    } finally {
+      closed.release()
+    }
+
+    const row = await pool.query(
+      `SELECT "status", "reservation_ids"
+       FROM "btcpay_payment"
+       WHERE "invoice_id" = $1`,
+      [invoiceId]
+    )
+    expect(row.rows).toHaveLength(1)
+    expect(row.rows[0].status).toBe("settled")
+    expect(row.rows[0].reservation_ids).toEqual({ ids: ["res_keep"] })
+  })
+
+  it("does not revive a holding row that is no longer holding", async () => {
+    const client = await pool.connect()
+    let holdingId = ""
+    try {
+      await client.query("BEGIN")
+      const acquired = await acquirePaymentSlot(
+        pgTx(client),
+        acquireInput({ cartId: "cart_gone", sessionId: "payses_gone" })
+      )
+      expect(acquired.ok).toBe(true)
+      if (!acquired.ok) {
+        return
+      }
+      holdingId = acquired.id
+      await client.query(
+        `UPDATE "btcpay_payment" SET "status" = 'expired' WHERE "id" = $1`,
+        [holdingId]
+      )
+      const stored = await commitOpenInvoice(pgTx(client), {
+        id: holdingId,
+        invoiceId: "inv_too_late",
+        expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+        reservationIds: ["res_late"],
+      })
+      expect(stored).toBe(false)
+      await client.query("COMMIT")
+    } finally {
+      client.release()
+    }
+
+    const row = await pool.query(
+      `SELECT "status", "invoice_id" FROM "btcpay_payment" WHERE "id" = $1`,
+      [holdingId]
+    )
+    expect(row.rows[0].status).toBe("expired")
+    expect(row.rows[0].invoice_id).toBeNull()
+  })
+
+  it("drops both tables on down and recreates the final schema", async () => {
+    try {
+      await runAll(pool, btcpayMigrationDown)
+      const tables = await pool.query(
+        `SELECT tablename FROM pg_tables
+         WHERE tablename IN ('btcpay_payment', 'btcpay_invoice_claim')`
+      )
+      expect(tables.rows).toHaveLength(0)
+
+      await runAll(pool, btcpayMigrationUp)
+      const columns = await pool.query(
         `SELECT "table_name", "column_name"
          FROM information_schema.columns
          WHERE table_schema = 'public'
            AND column_name IN ('payment_session_id', 'payment_session_hash', 'amount_cents')`
       )
-      const downNames = downColumns.rows.map(
-        (row) => `${row.table_name}.${row.column_name}`
-      )
-      expect(downNames).toContain("btcpay_payment.payment_session_id")
-      expect(downNames).toContain("btcpay_invoice_claim.payment_session_id")
-      expect(downNames).not.toContain("btcpay_payment.payment_session_hash")
-      expect(downNames).not.toContain("btcpay_payment.amount_cents")
-      const downIndexes = await pool.query(
+      const names = columns.rows.map((row) => `${row.table_name}.${row.column_name}`)
+      expect(names).toContain("btcpay_payment.payment_session_hash")
+      expect(names).toContain("btcpay_invoice_claim.payment_session_hash")
+      expect(names).toContain("btcpay_payment.amount_cents")
+      expect(names).not.toContain("btcpay_payment.payment_session_id")
+      const indexes = await pool.query(
         `SELECT indexname FROM pg_indexes
          WHERE indexname IN (
            'IDX_btcpay_payment_open_cart_unique',
            'IDX_btcpay_payment_provider_invoice_id_unique'
          )`
       )
-      expect(downIndexes.rows).toHaveLength(0)
-
-      await runAll(pool, migration170000Up)
-      const upIndexes = await pool.query(
-        `SELECT indexname FROM pg_indexes
-         WHERE indexname IN (
-           'IDX_btcpay_payment_open_cart_unique',
-           'IDX_btcpay_payment_provider_invoice_id_unique'
-         )`
-      )
-      expect(upIndexes.rows).toHaveLength(2)
-    } finally {
-      await resetSchema()
-    }
-  })
-
-  it("still drops the payment table from the earlier down migration", async () => {
-    try {
-      await runAll(pool, migration160000Down)
-      const tables = await pool.query(
-        `SELECT tablename FROM pg_tables WHERE tablename = 'btcpay_payment'`
-      )
-      expect(tables.rows).toHaveLength(0)
+      expect(indexes.rows).toHaveLength(2)
     } finally {
       await resetSchema()
     }
@@ -340,11 +453,7 @@ describe("BTCPay Postgres constraints", () => {
   async function resetSchema() {
     await pool.query(`DROP TABLE IF EXISTS "btcpay_payment" CASCADE`)
     await pool.query(`DROP TABLE IF EXISTS "btcpay_invoice_claim" CASCADE`)
-    await runAll(pool, [
-      ...migration143000Up,
-      ...migration160000Up,
-      ...migration170000Up,
-    ])
+    await runAll(pool, btcpayMigrationUp)
   }
 
   async function acquireCommitted(input: ReturnType<typeof acquireInput>) {
@@ -378,7 +487,7 @@ describe("BTCPay Postgres constraints", () => {
       return "claimed"
     } catch (error) {
       await client.query("ROLLBACK")
-      if (isUniqueViolation(error)) {
+      if (isUniqueViolation(error) || error instanceof PaymentNotOpenError) {
         return "replay"
       }
       throw error

@@ -149,6 +149,8 @@ The raw IP and the raw Medusa payment session id are not stored. Both are HMAC-S
 
 `GET /store/btcpay/status` reads `cart_id` and `payment_session_id` only. An invoice id in the query is ignored. The payment session must belong to that cart. If the cart is assigned to a customer, the caller must be that customer. The JSON body is `state`, `message`, and sometimes `expires_at` and `order_id`. It does not include a name, email, address, or invoice id. Requests are limited per IP and per cart (`BTCPAY_STATUS_MAX_REQUESTS`, default 30, and `BTCPAY_STATUS_WINDOW_SECONDS`, default 60). A blocked caller gets HTTP 429 and a message with no counts.
 
+Behind Cloudflare or another reverse proxy, `req.ip` is the proxy address until Express is told to trust that proxy. Set Medusa's `trust proxy` (hop count, or the proxy's address ranges) so the status limit and the new-invoice IP cap use the shopper's address. Without it, every shopper shares the proxy's bucket.
+
 ### Status JSON the return page reads
 
 `expires_at` is omitted when BTCPay did not send `expirationTime`. `order_id` is present only after the cart has an order.
@@ -172,9 +174,24 @@ The raw IP and the raw Medusa payment session id are not stored. Both are HMAC-S
 | Cart is not Ecuador | 200 | `{ "state": "failed", "message": "Bitcoin solo está disponible para Ecuador." }` |
 | Cart has no BTCPay session | 200 | `{ "state": "failed", "message": "Este carrito no tiene un pago con Bitcoin." }` |
 
-The return page (`btcpay-return`) shows `pago pendiente de confirmación` and the countdown for `pending` and `processing` (`data-testid="btcpay-pending-confirmation"`). For `settled` with `order_id` it redirects to `/{country}/order/{order_id}/confirmed`. For `settled` without `order_id` it calls `placeOrder` and keeps the pending sentence while that runs. Every other state sets `data-testid="btcpay-payment-error"` and shows `message`. `paid_late` and `paid_over` use that error paragraph. They do not show "Pago confirmado."
+The return page builds its own sentence from `state`. It does not render `message`.
 
-The storefront SDK throws on HTTP 429, and the return page catch keeps `pago pendiente de confirmación` on the waiting screen. It does not render the `limit_reached` body. The checkout payment step is a different limit: `BTCPAY_PENDING_LIMIT` shows "Ya tienes un pago pendiente, termínalo o espera a que venza".
+| `state` | What the shopper sees | Action |
+| --- | --- | --- |
+| `pending`, `processing` | Title **Pago pendiente de confirmación**. Countdown **Vence a las HH:MM**. At 0 it shows **Verificando…** and polls again. | none |
+| `settled` without `order_id` | **Pago recibido. Estamos creando tu pedido…** and `placeOrder` | none |
+| `settled` with `order_id` | Redirect to `/{country}/order/{order_id}/confirmed` | none |
+| `expired`, `invalid` | A short closed sentence, `data-testid="btcpay-payment-error"` | **Intentar de nuevo** → `/{country}/checkout?step=payment` |
+| `cart_changed`, `mismatch` | A short sentence, error test id | **Volver al checkout** |
+| `failed` | **No encontramos el pago.** | **Ir a la tienda** |
+| `partial` | **Recibimos un pago menor al total, así que no creamos tu pedido. No vuelvas a pagar esta factura. Escríbenos para devolverte lo que enviaste.** Neutral notice, not the error test id | `TODO(contacto)` |
+| `paid_late` | Neutral notice: the payment arrived after the deadline, the order was not created automatically, and the next step is a review | `TODO(contacto)` |
+| `paid_over` | Neutral notice: the payment is above the total, the order was not created automatically, and the next step is a review | `TODO(contacto)` |
+| `limit_reached` | The JS SDK throws on HTTP 429. The catch stays on **Pago pendiente de confirmación** | none |
+
+A polite live region announces only the 5 minute, 1 minute, and expired moments. The clock line itself is not live.
+
+`BTCPAY_PENDING_LIMIT` on the payment step still shows **Ya tienes un pago pendiente, termínalo o espera a que venza**. When that cart already has a Bitcoin checkout link, the step also links **Abrir el pago pendiente** to it.
 
 The return URL sent to BTCPay must use an origin already listed in `STORE_CORS`, and the path must end with `/checkout/btcpay/return`.
 
@@ -191,7 +208,7 @@ The Ecuador region itself is created by the region seed, not by this payment pro
    - Docs: <https://docs.btcpayserver.org/Development/ecommerce-integration-guide/> and <https://docs.btcpayserver.org/Developers/api/examples/>
 3. The browser is sent to the invoice `checkoutLink` on the BTCPay origin. The modal (`{BTCPAY_URL}/modal/btcpay.js`) is documented by BTCPay and is not what this storefront uses.
 4. BTCPay sends the shopper back to `/{country}/checkout/btcpay/return`. That page ignores payment status in the query string. It asks the backend `GET /store/btcpay/status?cart_id=...`, which loads the cart and re-fetches the invoice.
-5. Until the invoice is `Settled`, the page shows **pago pendiente de confirmación** (`data-testid="btcpay-pending-confirmation"`).
+5. Until the invoice is settled, the page title is **Pago pendiente de confirmación** (`data-testid="btcpay-pending-confirmation"`). `Processing` uses the same title. The countdown reads **Vence a las HH:MM**.
 6. When the invoice is settled, the page completes the cart. An `InvoiceSettled` webhook does the same through Medusa's payment webhook. Authorization requires every one of these to match the `btcpay_payment` row: invoice `storeId` equals `BTCPAY_STORE_ID`, the amount in integer US cents, currency USD, and `cart_id` in the invoice metadata. A mismatch does not authorize, including when BTCPay says `Settled`. The log line is `BTCPay confirmation rejected: <reason code>` and does not include an id or an amount.
 7. The first confirmation inserts a row in `btcpay_invoice_claim`. The unique `invoice_id` makes the other confirmation fail instead of placing a second order.
 
