@@ -1,6 +1,8 @@
 import {
   chooseShippingFulfillmentSet,
-  findDefaultShippingProfile,
+  defaultShippingProfileNameConflict,
+  ecuadorShippingProfileWarning,
+  matchDefaultShippingProfiles,
   matchExactName,
   namedStockLocation,
   paymentProvidersForRegion,
@@ -8,6 +10,7 @@ import {
   planRegionCountries,
   planStoreCurrencies,
   reusedRegionCurrencyWarning,
+  shouldFixEcuadorShippingProfile,
   SYSTEM_PAYMENT_PROVIDER_ID,
 } from "../ecuador-store-policy"
 
@@ -171,15 +174,87 @@ describe("matchExactName", () => {
   })
 })
 
-describe("findDefaultShippingProfile", () => {
-  it("uses type default and does not fall back to the first profile", () => {
+describe("matchDefaultShippingProfiles", () => {
+  it("uses type default and fails when more than one default exists", () => {
     const custom = { id: "sp_custom", type: "custom" }
     const fallback = { id: "sp_first", type: "gift" }
     const standard = { id: "sp_default", type: "default" }
+    const second = { id: "sp_default_2", type: "default" }
 
-    expect(findDefaultShippingProfile([custom, fallback])).toBeNull()
-    expect(findDefaultShippingProfile([custom, standard])).toEqual(standard)
-    expect(findDefaultShippingProfile([])).toBeNull()
+    expect(matchDefaultShippingProfiles([custom, fallback])).toEqual({
+      status: "missing",
+    })
+    expect(matchDefaultShippingProfiles([custom, standard])).toEqual({
+      status: "one",
+      profile: standard,
+    })
+    expect(matchDefaultShippingProfiles([])).toEqual({ status: "missing" })
+
+    const duplicate = matchDefaultShippingProfiles([standard, custom, second])
+    expect(duplicate.status).toBe("duplicate")
+    if (duplicate.status === "duplicate") {
+      expect(duplicate.message).toContain("sp_default")
+      expect(duplicate.message).toContain("sp_default_2")
+      expect(duplicate.message).toContain("Refusing to pick one")
+    }
+  })
+})
+
+describe("defaultShippingProfileNameConflict", () => {
+  it("stops when the default name already belongs to another type", () => {
+    const message = defaultShippingProfileNameConflict([
+      { id: "sp_gift", name: "Default Shipping Profile", type: "gift" },
+    ])
+
+    expect(message).toContain("sp_gift")
+    expect(message).toContain('type "gift"')
+    expect(message).toContain("not \"default\"")
+    expect(message).toContain("Refusing to create")
+    expect(
+      defaultShippingProfileNameConflict([
+        { id: "sp_default", name: "Default Shipping Profile", type: "default" },
+      ])
+    ).toBeUndefined()
+    expect(
+      defaultShippingProfileNameConflict([
+        { id: "sp_other", name: "Gifts", type: "gift" },
+      ])
+    ).toBeUndefined()
+  })
+})
+
+describe("ecuadorShippingProfileWarning", () => {
+  it("warns unless the option already uses the default profile", () => {
+    const warning = ecuadorShippingProfileWarning({
+      optionName: "Envío estándar",
+      optionId: "so_1",
+      optionProfileId: "sp_custom",
+      defaultProfileId: "sp_default",
+    })
+
+    expect(warning).toContain("Envío estándar")
+    expect(warning).toContain("sp_custom")
+    expect(warning).toContain("sp_default")
+    expect(warning).toContain("FIX_EC_SHIPPING_PROFILE=true")
+    expect(warning).toContain("left unchanged")
+    expect(
+      ecuadorShippingProfileWarning({
+        optionName: "Envío estándar",
+        optionId: "so_1",
+        optionProfileId: "sp_default",
+        defaultProfileId: "sp_default",
+      })
+    ).toBeUndefined()
+  })
+
+  it("moves the option only when FIX_EC_SHIPPING_PROFILE=true", () => {
+    expect(shouldFixEcuadorShippingProfile({})).toBe(false)
+    expect(shouldFixEcuadorShippingProfile({ FIX_EC_SHIPPING_PROFILE: "1" })).toBe(
+      false
+    )
+    expect(
+      shouldFixEcuadorShippingProfile({ FIX_EC_SHIPPING_PROFILE: "true" })
+    ).toBe(true)
   })
 })
 

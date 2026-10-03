@@ -212,14 +212,71 @@ export function matchExactName<T extends { id: string; name?: string | null }>(
   return { status: "missing" }
 }
 
+export const DEFAULT_SHIPPING_PROFILE_NAME = "Default Shipping Profile"
+
+export type DefaultShippingProfileMatch<T> =
+  | { status: "missing" }
+  | { status: "one"; profile: T }
+  | { status: "duplicate"; message: string }
+
 /**
  * The default shipping profile is the one whose type is "default".
- * Another profile is not a substitute.
+ * More than one is an error. Another type is not a substitute.
  */
-export function findDefaultShippingProfile<
-  T extends { type?: string | null },
->(profiles: T[]): T | null {
-  return profiles.find((profile) => profile.type === "default") ?? null
+export function matchDefaultShippingProfiles<
+  T extends { id: string; type?: string | null },
+>(profiles: T[]): DefaultShippingProfileMatch<T> {
+  const matches = profiles.filter((profile) => profile.type === "default")
+  if (matches.length > 1) {
+    const ids = matches.map((profile) => profile.id).join(", ")
+    return {
+      status: "duplicate",
+      message: `More than one shipping profile has type "default" (${ids}). Refusing to pick one.`,
+    }
+  }
+  if (matches.length === 1) {
+    return { status: "one", profile: matches[0] }
+  }
+  return { status: "missing" }
+}
+
+/**
+ * Medusa has a unique index on shipping_profile.name. Creating the default
+ * profile must stop when that name already belongs to a different type.
+ */
+export function defaultShippingProfileNameConflict<
+  T extends { id: string; name?: string | null; type?: string | null },
+>(profiles: T[], name = DEFAULT_SHIPPING_PROFILE_NAME): string | undefined {
+  const named = profiles.find((profile) => profile.name === name)
+  if (!named || named.type === "default") {
+    return undefined
+  }
+  const shown = named.type?.trim() || "unset"
+  return `A shipping profile named "${name}" already exists (${named.id}) with type "${shown}", not "default". Refusing to create another profile with that name or to change the existing one.`
+}
+
+export function shouldFixEcuadorShippingProfile(
+  env: { FIX_EC_SHIPPING_PROFILE?: string } = process.env
+) {
+  return env.FIX_EC_SHIPPING_PROFILE === "true"
+}
+
+/**
+ * Cap products use the default shipping profile. An Ecuador option on
+ * another profile is left unchanged unless FIX_EC_SHIPPING_PROFILE=true.
+ */
+export function ecuadorShippingProfileWarning(input: {
+  optionName?: string | null
+  optionId: string
+  optionProfileId?: string | null
+  defaultProfileId: string
+}): string | undefined {
+  if (input.optionProfileId === input.defaultProfileId) {
+    return undefined
+  }
+  const name = input.optionName?.trim() || input.optionId
+  const current = input.optionProfileId?.trim() || "unset"
+  return `Shipping option "${name}" is on shipping profile ${current}, not the default profile ${input.defaultProfileId} used by cap products. Those products will not offer this option at checkout. Set FIX_EC_SHIPPING_PROFILE=true to move it onto the default profile. The option was left unchanged.`
 }
 
 /**

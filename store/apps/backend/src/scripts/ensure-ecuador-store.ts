@@ -11,7 +11,10 @@ import {
 } from "./ecuador-zone-cleanup"
 import {
   chooseShippingFulfillmentSet,
-  findDefaultShippingProfile,
+  DEFAULT_SHIPPING_PROFILE_NAME,
+  defaultShippingProfileNameConflict,
+  ecuadorShippingProfileWarning,
+  matchDefaultShippingProfiles,
   matchExactName,
   namedStockLocation,
   paymentProvidersForRegion,
@@ -19,6 +22,7 @@ import {
   planRegionCountries,
   planStoreCurrencies,
   reusedRegionCurrencyWarning,
+  shouldFixEcuadorShippingProfile,
   SYSTEM_PAYMENT_PROVIDER_ID,
 } from "./ecuador-store-policy"
 import {
@@ -153,7 +157,11 @@ type StockLocationRecord = {
   sales_channels?: IdRecord[] | null
 }
 
-type ShippingProfileRecord = { id: string; type?: string | null }
+type ShippingProfileRecord = {
+  id: string
+  name?: string | null
+  type?: string | null
+}
 
 type ShippingOptionTypeRecord = {
   code?: string | null
@@ -165,6 +173,7 @@ type ShippingOptionRecord = {
   id: string
   name?: string | null
   service_zone_id?: string | null
+  shipping_profile_id?: string | null
   type?: ShippingOptionTypeRecord | null
 }
 
@@ -744,20 +753,27 @@ async function ensureShippingProfile(
 ) {
   const { data } = await query.graph({
     entity: "shipping_profile",
-    fields: ["id", "type"],
+    fields: ["id", "name", "type"],
   })
   const profiles = (data ?? []) as ShippingProfileRecord[]
-  const existing = findDefaultShippingProfile(profiles)
+  const match = matchDefaultShippingProfiles(profiles)
+  if (match.status === "duplicate") {
+    throw new MedusaError(MedusaError.Types.INVALID_DATA, match.message)
+  }
+  if (match.status === "one") {
+    return match.profile.id
+  }
 
-  if (existing) {
-    return existing.id
+  const nameConflict = defaultShippingProfileNameConflict(profiles)
+  if (nameConflict) {
+    throw new MedusaError(MedusaError.Types.INVALID_DATA, nameConflict)
   }
 
   const { result } = await createShippingProfilesWorkflow(container).run({
     input: {
       data: [
         {
-          name: "Default Shipping Profile",
+          name: DEFAULT_SHIPPING_PROFILE_NAME,
           type: "default",
         },
       ],
@@ -1033,7 +1049,7 @@ async function removeMisplacedEcuadorZones(
 async function ensureShippingOption(
   container: MedusaContainer,
   query: { graph: Function },
-  logger: { info: (message: string) => void },
+  logger: { info: (message: string) => void; warn: (message: string) => void },
   serviceZoneId: string,
   shippingProfileId: string,
   regionId: string
@@ -1044,6 +1060,7 @@ async function ensureShippingOption(
       "id",
       "name",
       "service_zone_id",
+      "shipping_profile_id",
       "type.code",
       "type.label",
       "type.description",
@@ -1107,8 +1124,19 @@ async function ensureShippingOption(
     existing.name === SHIPPING_NAME &&
     existing.type?.label === SHIPPING_LABEL &&
     existing.type?.description === SHIPPING_DESCRIPTION
+  const profileWarning = ecuadorShippingProfileWarning({
+    optionName: existing.name,
+    optionId: existing.id,
+    optionProfileId: existing.shipping_profile_id,
+    defaultProfileId: shippingProfileId,
+  })
+  const fixProfile = Boolean(profileWarning) && shouldFixEcuadorShippingProfile()
 
-  if (alreadySpanish) {
+  if (profileWarning && !fixProfile) {
+    logger.warn(profileWarning)
+  }
+
+  if (alreadySpanish && !fixProfile) {
     logger.info("Spanish standard shipping option already exists.")
     return
   }
@@ -1117,16 +1145,31 @@ async function ensureShippingOption(
     input: [
       {
         id: existing.id,
-        name: SHIPPING_NAME,
-        type: {
-          label: SHIPPING_LABEL,
-          description: SHIPPING_DESCRIPTION,
-          code: SHIPPING_CODE,
-        },
+        ...(alreadySpanish
+          ? {}
+          : {
+              name: SHIPPING_NAME,
+              type: {
+                label: SHIPPING_LABEL,
+                description: SHIPPING_DESCRIPTION,
+                code: SHIPPING_CODE,
+              },
+            }),
+        ...(fixProfile ? { shipping_profile_id: shippingProfileId } : {}),
       },
     ],
   })
-  logger.info("Updated the Ecuador shipping option to Spanish labels.")
+  if (fixProfile && alreadySpanish) {
+    logger.info(
+      `Moved shipping option "${existing.name ?? existing.id}" onto the default shipping profile.`
+    )
+    return
+  }
+  logger.info(
+    fixProfile
+      ? "Updated the Ecuador shipping option to Spanish labels and the default shipping profile."
+      : "Updated the Ecuador shipping option to Spanish labels."
+  )
 }
 
 async function ensureLocationSalesChannel(

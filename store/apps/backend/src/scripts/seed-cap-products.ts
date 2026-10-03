@@ -27,7 +27,10 @@ import {
   type CapSeed,
 } from "../data/cap-products"
 import { assertSeedAllowed } from "./assert-seed-allowed"
-import { findDefaultShippingProfile, matchExactName } from "./ecuador-store-policy"
+import {
+  matchDefaultShippingProfiles,
+  matchExactName,
+} from "./ecuador-store-policy"
 
 const ECUADOR_LOCATION_NAME = "Ecuador"
 const SALES_CHANNEL_NAME = "Default Sales Channel"
@@ -149,15 +152,19 @@ export default async function seedCapProducts({ container }: ExecArgs) {
     entity: "shipping_profile",
     fields: ["id", "type"],
   })
-  const shippingProfile = findDefaultShippingProfile(
+  const profileMatch = matchDefaultShippingProfiles(
     (profiles ?? []) as { id: string; type?: string | null }[]
   )
-  if (!shippingProfile) {
+  if (profileMatch.status === "duplicate") {
+    throw new MedusaError(MedusaError.Types.INVALID_DATA, profileMatch.message)
+  }
+  if (profileMatch.status === "missing") {
     throw new MedusaError(
       MedusaError.Types.NOT_FOUND,
       "No shipping profile with type default found. Run pnpm seed:ec before pnpm seed:caps."
     )
   }
+  const shippingProfile = profileMatch.profile
 
   const collectionId = await ensureCollection(container, query, logger)
   const categoryId = await ensureCategory(container, query, logger)
