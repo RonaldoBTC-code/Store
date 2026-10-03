@@ -4,13 +4,13 @@ import {
   ECUADOR_SETUP_LOCK_KEY,
   withEcuadorSetupLock,
 } from "../../src/scripts/ecuador-setup-lock"
+import ensureEcuadorStore from "../../src/scripts/ensure-ecuador-store"
 
 const ECUADOR_LOCK_ROWS_SQL = `SELECT pid
   FROM pg_locks
  WHERE locktype = 'advisory'
    AND objsubid = 1
    AND ((classid::bigint << 32) | objid::bigint) = $1::bigint`
-import ensureEcuadorStore from "../../src/scripts/ensure-ecuador-store"
 
 jest.setTimeout(300_000)
 
