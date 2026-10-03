@@ -85,7 +85,11 @@ cd apps/backend
 cp .env.template .env   # set DATABASE_URL
 pnpm exec medusa db:migrate
 pnpm exec medusa develop
+```
 
+El usuario admin se crea con correo y contraseña propios (`pnpm exec medusa user -e <tu-email> -p <tu-contraseña>`). No hay contraseña de ejemplo. SSL, secretos, copias, datos personales y pasarelas: `store/docs/database.md`.
+
+```bash
 # storefront — http://localhost:8000  (home: /ec)
 cd apps/storefront
 # .env.local: NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY

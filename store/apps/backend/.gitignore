@@ -1,5 +1,10 @@
 /dist
-.env
+.env*
+!.env.template
+!.env.example
+*.key
+*.dump
+backups/
 .DS_Store
 /uploads
 /node_modules
@@ -10,6 +15,14 @@ yarn-error.log
 coverage
 
 !src/**
+
+# Después de !src/**, para que un secreto dentro de src no vuelva a versionarse.
+.env*
+!.env.template
+!.env.example
+*.key
+*.dump
+backups/
 
 ./tsconfig.tsbuildinfo
 medusa-db.sql

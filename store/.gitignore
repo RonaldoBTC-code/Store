@@ -32,12 +32,15 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Local env files
-**/.env
-**/.env.local
-**/.env.development.local
-**/.env.test.local
-**/.env.production.local
+# Entorno local. Las plantillas sí se versionan.
+**/.env*
+!**/.env.template
+!**/.env.example
+
+# Llaves y volcados. Los archivos .sql siguen versionados.
+*.key
+*.dump
+backups/
 
 # Turbo
 .turbo

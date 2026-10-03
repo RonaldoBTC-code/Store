@@ -93,7 +93,8 @@ cd apps/backend && <pm> run test:unit -- -t "returns the cart"
 cd apps/backend
 <pm> exec medusa db:generate <module-name>   # generate migrations for a custom module
 <pm> exec medusa db:migrate                  # run migrations
-<pm> exec medusa user -e admin@test.com -p supersecret
+# Crea el admin con un correo y una contraseña propios. No uses una contraseña de ejemplo ni la dejes en el repositorio.
+<pm> exec medusa user -e <tu-email> -p <tu-contraseña>
 <pm> run backend:seed                        # from root; seeds initial data
 ```
 
