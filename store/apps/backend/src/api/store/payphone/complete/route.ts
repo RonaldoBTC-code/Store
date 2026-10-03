@@ -1,6 +1,10 @@
 import type { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
-import { PAYPHONE_SHOPPER_COPY } from "../../../../modules/payphone/service"
+import {
+  PAYPHONE_NO_CHARGE_COPY,
+  shopperReturnMessage,
+  shopperReturnState,
+} from "../../../../modules/payphone/return-state"
 import { PostPayphoneCompleteSchema } from "../../../middlewares"
 import { fulfillPayphoneSaleFromScope } from "../../../../workflows/complete-payphone-cart"
 
@@ -20,7 +24,12 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const parsed = PostPayphoneCompleteSchema.safeParse(body)
 
   if (!parsed.success) {
-    declined(res, "failed")
+    res.status(200).json({
+      state: "no_charge",
+      code: "failed",
+      charge: "none",
+      message: PAYPHONE_NO_CHARGE_COPY,
+    })
     return
   }
 
@@ -31,10 +40,12 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   })
 
   if (!outcome.ok) {
-    const status = outcome.code === "in_progress" ? 409 : 400
-    res.status(status).json({
+    const state = shopperReturnState(outcome.charge)
+    res.status(200).json({
+      state,
       code: outcome.code,
-      message: shopperMessage(outcome.code, outcome.message),
+      charge: outcome.charge,
+      message: shopperReturnMessage(outcome.charge),
     })
     return
   }
@@ -43,27 +54,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   res.status(200).json({
     order_id: outcome.orderId,
     country_code: await cartCountry(query, outcome.cartId),
-  })
-}
-
-function shopperMessage(
-  code: keyof typeof PAYPHONE_SHOPPER_COPY,
-  raw: string | undefined
-) {
-  if (raw?.includes("Payphone Business")) {
-    return "No pudimos crear el pedido y el reverso en PayPhone falló. Revierte la transacción en Payphone Business."
-  }
-
-  return PAYPHONE_SHOPPER_COPY[code]
-}
-
-function declined(
-  res: MedusaResponse,
-  code: keyof typeof PAYPHONE_SHOPPER_COPY
-) {
-  res.status(400).json({
-    code,
-    message: PAYPHONE_SHOPPER_COPY[code],
   })
 }
 

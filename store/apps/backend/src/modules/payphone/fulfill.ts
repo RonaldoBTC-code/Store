@@ -2,6 +2,7 @@ import {
   planPayphoneCompletion,
   type PayphoneCompletionSession,
 } from "./completion"
+import type { PayphoneChargeState } from "./return-state"
 import {
   classifyPayphoneMessage,
   type PayphoneShopperCode,
@@ -30,6 +31,7 @@ export type PayphoneFulfillResult =
       ok: false
       code: PayphoneShopperCode
       alreadySettled: boolean
+      charge: PayphoneChargeState
       message?: string
     }
 
@@ -65,7 +67,7 @@ export async function fulfillPayphoneSale(
   })
 
   if (plan.action === "reject") {
-    return { ok: false, code: "failed", alreadySettled: false }
+    return { ok: false, code: "failed", alreadySettled: false, charge: "none" }
   }
 
   if (plan.action === "return_order") {
@@ -77,7 +79,7 @@ export async function fulfillPayphoneSale(
     typeof initiatedAmountCents !== "number" ||
     !Number.isSafeInteger(initiatedAmountCents)
   ) {
-    return { ok: false, code: "failed", alreadySettled: false }
+    return { ok: false, code: "failed", alreadySettled: false, charge: "none" }
   }
 
   try {
@@ -101,10 +103,11 @@ export async function fulfillPayphoneSale(
       return { ok: true, orderId: recovered, cartId: plan.cartId }
     }
 
-    return { ok: false, code: "failed", alreadySettled: false }
+    return { ok: false, code: "failed", alreadySettled: false, charge: "none" }
   } catch (error) {
     const message = error instanceof Error ? error.message : ""
     const code = classifyPayphoneMessage(message)
+    const charge = readCharge(error)
 
     if (code === "in_progress") {
       const recovered = await deps.findOrderId(plan.cartId)
@@ -113,11 +116,57 @@ export async function fulfillPayphoneSale(
       }
 
       const claim = await deps.findClaim?.(plan.sessionId)
-      if (claim?.status === "rejected") {
-        return { ok: false, code: "failed", alreadySettled: true }
+      if (claim?.orderId) {
+        return { ok: true, orderId: claim.orderId, cartId: plan.cartId }
+      }
+
+      const claimCharge = claim ? chargeForStatus(claim.status) : charge
+      const settled =
+        claim?.status === "rejected" ||
+        claim?.status === "reversed" ||
+        claim?.status === "needs_reversal"
+
+      return {
+        ok: false,
+        code: claimCharge === "open" ? "pending" : code,
+        alreadySettled: settled,
+        charge: claimCharge,
+        message,
       }
     }
 
-    return { ok: false, code, alreadySettled: false, message }
+    return { ok: false, code, alreadySettled: false, charge, message }
   }
+}
+
+function readCharge(error: unknown): PayphoneChargeState {
+  if (error && typeof error === "object" && "charge" in error) {
+    const charge = (error as { charge?: unknown }).charge
+    if (
+      charge === "none" ||
+      charge === "reversal_confirmed" ||
+      charge === "open"
+    ) {
+      return charge
+    }
+  }
+
+  return "none"
+}
+
+function chargeForStatus(status: string): PayphoneChargeState {
+  if (status === "reversed") {
+    return "reversal_confirmed"
+  }
+
+  if (
+    status === "needs_reversal" ||
+    status === "reversing" ||
+    status === "processing" ||
+    status === "captured"
+  ) {
+    return "open"
+  }
+
+  return "none"
 }

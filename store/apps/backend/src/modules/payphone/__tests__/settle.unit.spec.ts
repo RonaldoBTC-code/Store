@@ -1,4 +1,6 @@
 import { MedusaError } from "@medusajs/framework/utils"
+import { retryPayphoneReversals } from "../../../jobs/payphone-reverse"
+import type { PayphoneClaimRecord } from "../../payphone-claim/service"
 import { PayphoneResultCode } from "../service"
 import { settlePayphonePayment, type PayphoneClaimStore } from "../settle"
 import type { PayphoneHttpClient, PayphoneTransaction } from "../client"
@@ -19,36 +21,111 @@ function approved(overrides: Partial<PayphoneTransaction> = {}): PayphoneTransac
 }
 
 function memoryClaims(): PayphoneClaimStore & {
-  rows: Map<string, { status: string; orderId?: string }>
+  rows: Map<string, PayphoneClaimRecord>
+  byClient: Map<string, string>
 } {
-  const rows = new Map<string, { status: string; orderId?: string }>()
+  const rows = new Map<string, PayphoneClaimRecord>()
+  const byClient = new Map<string, string>()
+  let seq = 0
+
+  const findClient = (clientTransactionId: string) => {
+    const id = byClient.get(clientTransactionId)
+    return id ? rows.get(id) ?? null : null
+  }
 
   return {
     rows,
-    async insertPending(input) {
-      if (rows.has(input.clientTransactionId)) {
+    byClient,
+    async ensurePending(input) {
+      const existing = findClient(input.clientTransactionId)
+      if (existing) {
+        return existing
+      }
+
+      seq += 1
+      const row: PayphoneClaimRecord = {
+        id: `claim_${seq}`,
+        clientTransactionId: input.clientTransactionId,
+        transactionId: null,
+        cartId: input.cartId,
+        status: "pending",
+        orderId: null,
+      }
+      rows.set(row.id, row)
+      byClient.set(row.clientTransactionId, row.id)
+      return row
+    },
+    async claimProcessing(id) {
+      const row = rows.get(id)
+      if (!row || row.status !== "pending") {
+        return null
+      }
+
+      row.status = "processing"
+      return { ...row }
+    },
+    async attachTransactionId(id, transactionId) {
+      for (const row of rows.values()) {
+        if (row.transactionId === transactionId && row.id !== id) {
+          return "duplicate"
+        }
+      }
+
+      const row = rows.get(id)
+      if (!row || row.status !== "processing") {
         return "duplicate"
       }
 
-      rows.set(input.clientTransactionId, { status: "pending" })
-      return "claimed"
+      row.transactionId = transactionId
+      return "attached"
     },
-    async markCaptured(clientTransactionId, _transactionId, orderId) {
-      const row = rows.get(clientTransactionId)
+    async markNeedsReversal(id, transactionId) {
+      const row = rows.get(id)
       if (!row) {
         return
       }
 
-      row.status = "captured"
-      row.orderId = orderId
+      row.status = "needs_reversal"
+      row.transactionId = transactionId
     },
-    async markRejected(clientTransactionId) {
-      const row = rows.get(clientTransactionId)
+    async markReversed(id) {
+      const row = rows.get(id)
+      if (!row) {
+        return
+      }
+
+      row.status = "reversed"
+    },
+    async markRejected(id) {
+      const row = rows.get(id)
       if (!row) {
         return
       }
 
       row.status = "rejected"
+    },
+    async markCaptured(clientTransactionId, transactionId, orderId) {
+      const row = findClient(clientTransactionId)
+      if (!row) {
+        return
+      }
+
+      row.status = "captured"
+      row.transactionId = transactionId
+      row.orderId = orderId
+    },
+    async getByTransactionId(transactionId) {
+      for (const row of rows.values()) {
+        if (row.transactionId === transactionId) {
+          return { ...row }
+        }
+      }
+
+      return null
+    },
+    async getByClientTransactionId(clientTransactionId) {
+      const row = findClient(clientTransactionId)
+      return row ? { ...row } : null
     },
   }
 }
@@ -60,6 +137,8 @@ function harness(options: {
   requestCartId?: string | null
   initiatedAmountCents?: number
   complete?: () => Promise<{ orderId: string }>
+  reverse?: (transactionId: number) => Promise<void>
+  completeTimeoutMs?: number
 } = {}) {
   const claims = memoryClaims()
   const confirmCalls: unknown[] = []
@@ -68,7 +147,10 @@ function harness(options: {
   let completeAttempts = 0
   const client: PayphoneHttpClient = {
     prepare: async () => {
-      throw new Error("prepare is not part of settle")
+      throw new MedusaError(
+        MedusaError.Types.UNEXPECTED_STATE,
+        "prepare is not part of settle"
+      )
     },
     confirm: async () => {
       confirmCalls.push(true)
@@ -76,6 +158,9 @@ function harness(options: {
     },
     reverse: async (transactionId) => {
       reverseCalls.push(transactionId)
+      if (options.reverse) {
+        await options.reverse(transactionId)
+      }
     },
   }
 
@@ -101,6 +186,7 @@ function harness(options: {
           completes += 1
           return { orderId: "order_01SETTLE" }
         },
+        completeTimeoutMs: options.completeTimeoutMs,
       },
       {
         sessionCartId: CART,
@@ -127,6 +213,10 @@ function harness(options: {
   }
 }
 
+function statusOf(claims: ReturnType<typeof memoryClaims>) {
+  return claims.rows.values().next().value?.status
+}
+
 describe("settlePayphonePayment", () => {
   it("completes once when PayPhone matches the cart", async () => {
     const { run, confirmCalls, completes, claims } = harness()
@@ -136,7 +226,7 @@ describe("settlePayphonePayment", () => {
     expect(result).toEqual({ orderId: "order_01SETTLE", transactionId: 42 })
     expect(confirmCalls).toHaveLength(1)
     expect(completes()).toBe(1)
-    expect(claims.rows.get(SESSION)?.status).toBe("captured")
+    expect(statusOf(claims)).toBe("captured")
   })
 
   it("does not complete when PayPhone's amount is 1 cent below the cart", async () => {
@@ -148,7 +238,7 @@ describe("settlePayphonePayment", () => {
     expect(confirmCalls).toHaveLength(1)
     expect(reverseCalls).toEqual([42])
     expect(completes()).toBe(0)
-    expect(claims.rows.get(SESSION)?.status).toBe("rejected")
+    expect(statusOf(claims)).toBe("reversed")
   })
 
   it("does not complete when PayPhone's currency is not USD", async () => {
@@ -189,18 +279,101 @@ describe("settlePayphonePayment", () => {
     expect(completeAttempts()).toBe(1)
     expect(reverseCalls).toEqual([42])
     expect(completes()).toBe(0)
-    expect(claims.rows.get(SESSION)?.status).toBe("rejected")
+    expect(statusOf(claims)).toBe("reversed")
   })
 
-  it("does not confirm when the cart total changed after payment started", async () => {
-    const { run, confirmCalls, completes, claims } = harness({
+  it("leaves needs_reversal when order creation fails and reverse fails", async () => {
+    const { run, confirmCalls, reverseCalls, claims } = harness({
+      complete: async () => {
+        throw new MedusaError(
+          MedusaError.Types.UNEXPECTED_STATE,
+          "order failed"
+        )
+      },
+      reverse: async () => {
+        throw new MedusaError(MedusaError.Types.UNEXPECTED_STATE, "reverse down")
+      },
+    })
+
+    await expect(run()).rejects.toThrow(PayphoneResultCode.failed)
+    expect(confirmCalls).toHaveLength(1)
+    expect(reverseCalls).toEqual([42])
+    expect(statusOf(claims)).toBe("needs_reversal")
+
+    let jobReverses = 0
+    await retryPayphoneReversals({
+      graceSeconds: 0,
+      listWork: async () =>
+        [...claims.rows.values()].filter((row) => row.status === "needs_reversal"),
+      claimReversal: async (id) => {
+        const row = claims.rows.get(id)
+        if (!row || row.status !== "needs_reversal") {
+          return null
+        }
+
+        row.status = "reversing"
+        return { ...row }
+      },
+      markReversed: async (id) => {
+        const row = claims.rows.get(id)
+        if (row) {
+          row.status = "reversed"
+        }
+      },
+      releaseReversal: async (id) => {
+        const row = claims.rows.get(id)
+        if (row && row.status === "reversing") {
+          row.status = "needs_reversal"
+        }
+      },
+      markCaptured: async () => undefined,
+      findOrderId: async () => null,
+      reverse: async () => {
+        jobReverses += 1
+      },
+    })
+
+    expect(jobReverses).toBe(1)
+    expect(statusOf(claims)).toBe("reversed")
+
+    await retryPayphoneReversals({
+      graceSeconds: 0,
+      listWork: async () =>
+        [...claims.rows.values()].filter((row) => row.status === "needs_reversal"),
+      claimReversal: async () => null,
+      markReversed: async () => undefined,
+      releaseReversal: async () => undefined,
+      markCaptured: async () => undefined,
+      findOrderId: async () => null,
+      reverse: async () => {
+        jobReverses += 1
+      },
+    })
+
+    expect(jobReverses).toBe(1)
+  })
+
+  it("marks needs_reversal and does not reverse when order creation times out", async () => {
+    const { run, reverseCalls, claims } = harness({
+      completeTimeoutMs: 20,
+      complete: () => new Promise(() => undefined),
+    })
+
+    await expect(run()).rejects.toThrow(PayphoneResultCode.failed)
+    expect(reverseCalls).toEqual([])
+    expect(statusOf(claims)).toBe("needs_reversal")
+  })
+
+  it("reverses when the cart total changed after payment started", async () => {
+    const { run, confirmCalls, reverseCalls, completes, claims } = harness({
       cartTotal: "36.00",
       initiatedAmountCents: 3500,
     })
 
     await expect(run()).rejects.toThrow(PayphoneResultCode.cartChanged)
     expect(confirmCalls).toHaveLength(0)
+    expect(reverseCalls).toEqual([42])
     expect(completes()).toBe(0)
-    expect(claims.rows.size).toBe(0)
+    expect(statusOf(claims)).toBe("reversed")
   })
 })

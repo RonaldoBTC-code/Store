@@ -1,3 +1,4 @@
+import { MathBN } from "@medusajs/framework/utils"
 import { splitFromCartTotals, splitSumsToAmount, toUsdCents } from "../amounts"
 import { payphoneReverseAllowed } from "../reverse-window"
 
@@ -103,6 +104,51 @@ describe("PayPhone cents from Medusa totals", () => {
 
   it("reads BigNumber-shaped input", () => {
     expect(toUsdCents({ value: "11.50", numeric: 11.5 })).toBe(1150)
+  })
+
+  it("converts 19.99, 0.1 + 0.2, and IVA totals without binary float drift", () => {
+    expect(toUsdCents("19.99")).toBe(1999)
+    expect(toUsdCents(19.99)).toBe(1999)
+    expect(toUsdCents(0.1) + toUsdCents(0.2)).toBe(30)
+    expect(toUsdCents(MathBN.add("0.1", "0.2"))).toBe(30)
+
+    const table = [
+      {
+        total: "19.99",
+        taxTotal: "2.61",
+        amount: 1999,
+        amountWithTax: 1738,
+        tax: 261,
+      },
+      {
+        total: "1.15",
+        taxTotal: "0.15",
+        amount: 115,
+        amountWithTax: 100,
+        tax: 15,
+      },
+      {
+        total: "0.30",
+        taxTotal: "0.04",
+        amount: 30,
+        amountWithTax: 26,
+        tax: 4,
+      },
+    ]
+
+    for (const row of table) {
+      const split = splitFromCartTotals({
+        total: row.total,
+        taxTotal: row.taxTotal,
+        untaxedTotal: 0,
+      })
+
+      expect(split.amount).toBe(row.amount)
+      expect(split.amountWithTax).toBe(row.amountWithTax)
+      expect(split.tax).toBe(row.tax)
+      expect(split.amountWithTax + split.tax).toBe(split.amount)
+      expect(splitSumsToAmount(split)).toBe(true)
+    }
   })
 
   it("rejects a negative amount", () => {

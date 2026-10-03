@@ -1,6 +1,7 @@
 import {
   PAYPHONE_PROVIDER_ID,
   SYSTEM_PROVIDER_ID,
+  assertManualProviderAllowedAtStartup,
   regionPaymentProviders,
   testPaymentsAllowed,
   warnTestPaymentsInProduction,
@@ -61,6 +62,23 @@ describe("Ecuador payment providers", () => {
     )
 
     expect(warn).not.toHaveBeenCalled()
+  })
+
+  it("fails startup when pp_system_default is on in production without ALLOW_TEST_PAYMENTS", () => {
+    expect(() =>
+      assertManualProviderAllowedAtStartup(
+        [PAYPHONE_PROVIDER_ID, SYSTEM_PROVIDER_ID],
+        { NODE_ENV: "production" }
+      )
+    ).toThrow(/pp_system_default/)
+  })
+
+  it("starts in production when the manual provider is not enabled", () => {
+    expect(() =>
+      assertManualProviderAllowedAtStartup([PAYPHONE_PROVIDER_ID], {
+        NODE_ENV: "production",
+      })
+    ).not.toThrow()
   })
 
   it("honors ALLOW_TEST_PAYMENTS=false outside production", () => {

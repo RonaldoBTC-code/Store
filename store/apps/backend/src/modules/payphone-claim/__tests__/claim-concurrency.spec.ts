@@ -2,6 +2,7 @@ import path from "path"
 import { moduleIntegrationTestRunner } from "@medusajs/test-utils"
 import { MedusaError } from "@medusajs/framework/utils"
 import type { PayphoneHttpClient } from "../../payphone/client"
+import { retryPayphoneReversals } from "../../../jobs/payphone-reverse"
 import { fulfillPayphoneSale } from "../../payphone/fulfill"
 import { PAYPHONE_PROVIDER_ID } from "../../payphone/providers"
 import { settlePayphonePayment } from "../../payphone/settle"
@@ -111,6 +112,13 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
             },
           ])
         )
+
+        const constraints = await MikroOrmWrapper.getManager().execute(
+          `select conname from pg_constraint where conname = 'payphone_claim_transaction_id_key'`
+        )
+        expect(constraints).toEqual([
+          { conname: "payphone_claim_transaction_id_key" },
+        ])
       })
 
       it("completes exactly one order from the webhook alone", async () => {
@@ -144,6 +152,237 @@ moduleIntegrationTestRunner<PayphoneClaimModuleService>({
         })
         expect(claims).toHaveLength(1)
         expect(claims[0]).toMatchObject({ status: "captured" })
+        expect(sale.confirms()).toBe(1)
+      })
+
+      it("creates nothing for a replayed callback", async () => {
+        const sale = saleHarness(service, 83)
+        const first = await sale.fulfill("return")
+        const replay = await sale.fulfill("return")
+
+        expect(first).toMatchObject({ ok: true, orderId: "order_01RACE" })
+        expect(replay).toEqual(first)
+        expect(sale.confirms()).toBe(1)
+        expect(sale.completes()).toBe(1)
+
+        const forged = await fulfillPayphoneSale(
+          {
+            loadSession: async () => ({
+              id: "payses_forged",
+              amount: "34.99",
+              currency_code: "usd",
+              provider_id: PAYPHONE_PROVIDER_ID,
+              payment_collection_id: "paycol_forged",
+              data: {
+                amount_cents: 3499,
+                session_id: "payses_forged",
+                payphone_confirmed: false,
+              },
+            }),
+            loadCartId: async () => "cart_forged",
+            findOrderId: async () => null,
+            findClaim: (clientTransactionId) =>
+              service.getByClientTransactionId(clientTransactionId),
+            settle: (input) =>
+              settlePayphonePayment(
+                {
+                  claims: service,
+                  client: {
+                    prepare: async () => {
+                      throw new MedusaError(
+                        MedusaError.Types.UNEXPECTED_STATE,
+                        "prepare is not part of settle"
+                      )
+                    },
+                    confirm: async () => {
+                      throw new MedusaError(
+                        MedusaError.Types.UNEXPECTED_STATE,
+                        "forged confirm"
+                      )
+                    },
+                    reverse: async () => undefined,
+                  },
+                  loadCart: async () => ({
+                    id: "cart_forged",
+                    currencyCode: "usd",
+                    total: "34.99",
+                    taxTotal: "4.56",
+                    shippingTotal: 0,
+                    shippingTaxTotal: 0,
+                  }),
+                  complete: async () => {
+                    throw new MedusaError(
+                      MedusaError.Types.UNEXPECTED_STATE,
+                      "forged complete"
+                    )
+                  },
+                },
+                {
+                  sessionCartId: input.cart_id,
+                  sessionId: input.session_id,
+                  currencyCode: input.currency_code,
+                  initiatedAmountCents: input.initiated_amount_cents,
+                  payphoneTransactionId: input.payphone_transaction_id,
+                  sessionData: input.data,
+                }
+              ),
+          },
+          {
+            clientTransactionId: "payses_forged",
+            payphoneTransactionId: 83,
+          }
+        )
+
+        expect(forged.ok).toBe(false)
+        const captured = await service.listPayphoneClaims({
+          transaction_id: "83",
+        })
+        expect(captured).toHaveLength(1)
+        expect(captured[0]?.order_id).toBe("order_01RACE")
+      })
+
+      it("reverses when the cart changed after the payment was created", async () => {
+        let reverses = 0
+        const client: PayphoneHttpClient = {
+          prepare: async () => {
+            throw new MedusaError(
+              MedusaError.Types.UNEXPECTED_STATE,
+              "prepare is not part of settle"
+            )
+          },
+          confirm: async () => {
+            throw new MedusaError(
+              MedusaError.Types.UNEXPECTED_STATE,
+              "confirm should not run"
+            )
+          },
+          reverse: async () => {
+            reverses += 1
+          },
+        }
+
+        await expect(
+          settlePayphonePayment(
+            {
+              claims: service,
+              client,
+              loadCart: async () => ({
+                id: "cart_changed",
+                currencyCode: "usd",
+                total: "36.00",
+                taxTotal: "4.70",
+                shippingTotal: 0,
+                shippingTaxTotal: 0,
+              }),
+              complete: async () => ({ orderId: "order_should_not" }),
+            },
+            {
+              sessionCartId: "cart_changed",
+              sessionId: "payses_changed",
+              currencyCode: "usd",
+              initiatedAmountCents: 3499,
+              payphoneTransactionId: 84,
+              sessionData: { amount_cents: 3499 },
+            }
+          )
+        ).rejects.toThrow(PayphoneResultCode.cartChanged)
+
+        expect(reverses).toBe(1)
+        const [claim] = await service.listPayphoneClaims({
+          client_transaction_id: "payses_changed",
+        })
+        expect(claim?.status).toBe("reversed")
+        expect(claim?.order_id ?? null).toBeNull()
+      })
+
+      it("keeps needs_reversal until the job reverses once", async () => {
+        let reverses = 0
+        const client: PayphoneHttpClient = {
+          prepare: async () => {
+            throw new MedusaError(
+              MedusaError.Types.UNEXPECTED_STATE,
+              "prepare is not part of settle"
+            )
+          },
+          confirm: async () => ({
+            amount: 3499,
+            clientTransactionId: "payses_85",
+            statusCode: 3,
+            transactionStatus: "Approved",
+            transactionId: 85,
+            currency: "USD",
+          }),
+          reverse: async () => {
+            reverses += 1
+            if (reverses === 1) {
+              throw new MedusaError(
+                MedusaError.Types.UNEXPECTED_STATE,
+                "reverse timeout"
+              )
+            }
+          },
+        }
+
+        await expect(
+          settlePayphonePayment(
+            {
+              claims: service,
+              client,
+              loadCart: async () => ({
+                id: "cart_85",
+                currencyCode: "usd",
+                total: "34.99",
+                taxTotal: "4.56",
+                shippingTotal: 0,
+                shippingTaxTotal: 0,
+              }),
+              complete: async () => {
+                throw new MedusaError(
+                  MedusaError.Types.INVALID_DATA,
+                  "La cédula o el RUC no es válido."
+                )
+              },
+            },
+            {
+              sessionCartId: "cart_85",
+              sessionId: "payses_85",
+              currencyCode: "usd",
+              initiatedAmountCents: 3499,
+              payphoneTransactionId: 85,
+              sessionData: { amount_cents: 3499 },
+            }
+          )
+        ).rejects.toThrow(PayphoneResultCode.failed)
+
+        const [pending] = await service.listPayphoneClaims({
+          client_transaction_id: "payses_85",
+        })
+        expect(pending?.status).toBe("needs_reversal")
+        expect(reverses).toBe(1)
+
+        const deps = {
+          listWork: (graceSeconds: number) =>
+            service.listReversalWork(graceSeconds),
+          claimReversal: (id: string) => service.claimReversal(id),
+          markReversed: (id: string) => service.markReversed(id),
+          releaseReversal: (id: string) => service.releaseReversal(id),
+          markCaptured: (
+            clientTransactionId: string,
+            transactionId: string,
+            orderId: string
+          ) => service.markCaptured(clientTransactionId, transactionId, orderId),
+          findOrderId: async () => null,
+          reverse: (transactionId: number) => client.reverse(transactionId),
+          graceSeconds: 0,
+        }
+        await retryPayphoneReversals(deps)
+        await retryPayphoneReversals(deps)
+
+        expect(reverses).toBe(2)
+        const [done] = await service.listPayphoneClaims({
+          client_transaction_id: "payses_85",
+        })
+        expect(done?.status).toBe("reversed")
       })
     })
   },

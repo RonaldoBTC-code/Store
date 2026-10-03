@@ -1,3 +1,5 @@
+import { MedusaError } from "@medusajs/framework/utils"
+
 export const PAYPHONE_PROVIDER_ID = "pp_payphone_payphone"
 export const SYSTEM_PROVIDER_ID = "pp_system_default"
 
@@ -47,5 +49,31 @@ export function warnTestPaymentsInProduction(
 ) {
   if (env.NODE_ENV === "production" && env.ALLOW_TEST_PAYMENTS === "true") {
     logger?.warn?.(TEST_PAYMENTS_PRODUCTION_WARNING)
+  }
+}
+
+/**
+ * Called from the claim module loader on every backend start.
+ * Production refuses to boot when the enabled provider list includes
+ * pp_system_default and ALLOW_TEST_PAYMENTS is not true.
+ * ALLOW_TEST_PAYMENTS=true still boots, and warns, and is never for production.
+ */
+export function assertManualProviderAllowedAtStartup(
+  providers: string[],
+  env: Env = process.env
+) {
+  if (env.NODE_ENV !== "production") {
+    return
+  }
+
+  if (env.ALLOW_TEST_PAYMENTS === "true") {
+    return
+  }
+
+  if (providers.includes(SYSTEM_PROVIDER_ID)) {
+    throw new MedusaError(
+      MedusaError.Types.NOT_ALLOWED,
+      "pp_system_default cannot start in production without ALLOW_TEST_PAYMENTS. ALLOW_TEST_PAYMENTS is never for production."
+    )
   }
 }
