@@ -16,6 +16,7 @@ import {
   namedStockLocation,
   paymentProvidersForRegion,
   planEcuadorSetup,
+  productionFixFlagWarning,
   planIva,
   planRegionCountries,
   planStoreCurrencies,
@@ -233,6 +234,10 @@ export default async function ensureEcuadorStore({
 }) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
+  const flagWarning = productionFixFlagWarning()
+  if (flagWarning) {
+    logger.warn(flagWarning)
+  }
   const setup = await preflightEcuadorStore(query)
   if (setup.status === "blocked") {
     throw new MedusaError(

@@ -85,6 +85,10 @@ cd apps/backend
 cp .env.template .env   # set DATABASE_URL
 pnpm migrate            # schema + fresh Ecuador store seed
 pnpm seed:ec            # safe to re-run: USD, region ec, IVA 15%, shipping
+# FIX_EC_ZONES and FIX_EC_SHIPPING_PROFILE are one-time flags.
+# migrate runs on every deploy. Remove them after the fix is applied.
+# In production, every run warns while either flag is still true.
+# Moving the shipping option leaves products on the old profile without it.
 # fill TODO sku / price / stock in src/data/cap-products.ts
 pnpm seed:caps
 pnpm catalog:sync

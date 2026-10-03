@@ -100,6 +100,8 @@ pnpm seed:ec
 
 A fresh database gets USD as the default currency, one Ecuador region (`ec`), IVA 15% as the default tax rate, tax-inclusive prices, an Ecuador stock location with its own fulfillment set, and Envío estándar at 10 USD. There is no Europe region and no demo apparel. The payment provider stays `pp_system_default`.
 
+`FIX_EC_ZONES` and `FIX_EC_SHIPPING_PROFILE` are one-time flags. `pnpm migrate` runs this setup on every deploy, including production. Set a flag to `true` only for the deploy that should apply that fix, then remove it from the environment. While either flag is `true` and `NODE_ENV` is `production` or `prod`, every run logs that the flag must be removed. `FIX_EC_SHIPPING_PROFILE=true` moves the Ecuador shipping option onto the default shipping profile. Products that are still on the old profile then do not get that shipping option at checkout.
+
 5. Fill the TODO sku, USD price, and stock quantity for each cap in `apps/backend/src/data/cap-products.ts`, then seed the catalog and drop any leftover demo products:
 
 ```bash

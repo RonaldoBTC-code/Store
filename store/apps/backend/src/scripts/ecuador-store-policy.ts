@@ -1,3 +1,5 @@
+import { isProductionNodeEnv } from "./assert-seed-allowed"
+
 export const SYSTEM_PAYMENT_PROVIDER_ID = "pp_system_default"
 export const ECUADOR_STOCK_LOCATION_NAME = "Ecuador"
 export const ECUADOR_FULFILLMENT_SET_NAME = "Envíos Ecuador"
@@ -355,6 +357,35 @@ export function shouldFixEcuadorShippingProfile(
   env: { FIX_EC_SHIPPING_PROFILE?: string } = process.env
 ) {
   return env.FIX_EC_SHIPPING_PROFILE === "true"
+}
+
+/**
+ * migrate runs this setup on every deploy. A one-time fix flag left set in
+ * production is warned about on every run.
+ */
+export function productionFixFlagWarning(
+  env: {
+    NODE_ENV?: string
+    FIX_EC_ZONES?: string
+    FIX_EC_SHIPPING_PROFILE?: string
+  } = process.env
+): string | undefined {
+  if (!isProductionNodeEnv(env.NODE_ENV)) {
+    return undefined
+  }
+
+  const flags = [
+    env.FIX_EC_ZONES === "true" ? "FIX_EC_ZONES" : null,
+    env.FIX_EC_SHIPPING_PROFILE === "true" ? "FIX_EC_SHIPPING_PROFILE" : null,
+  ].filter((flag): flag is string => Boolean(flag))
+
+  if (!flags.length) {
+    return undefined
+  }
+
+  const listed = flags.join(" and ")
+  const verb = flags.length > 1 ? "are" : "is"
+  return `${listed} ${verb} set while NODE_ENV is production. These are one-time flags and must be removed from the environment once the fix has been applied. migrate runs this setup on every deploy.`
 }
 
 /**

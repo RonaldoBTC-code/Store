@@ -9,6 +9,7 @@ import {
   planIva,
   planRegionCountries,
   planStoreCurrencies,
+  productionFixFlagWarning,
   reusedRegionCurrencyWarning,
   shouldFixEcuadorShippingProfile,
   SYSTEM_PAYMENT_PROVIDER_ID,
@@ -245,6 +246,44 @@ describe("ecuadorShippingProfileWarning", () => {
         defaultProfileId: "sp_default",
       })
     ).toBeUndefined()
+  })
+
+  it("warns on every production run while a one-time fix flag is set", () => {
+    const zones = productionFixFlagWarning({
+      NODE_ENV: "production",
+      FIX_EC_ZONES: "true",
+    })
+    const profile = productionFixFlagWarning({
+      NODE_ENV: " prod ",
+      FIX_EC_SHIPPING_PROFILE: "true",
+    })
+    const both = productionFixFlagWarning({
+      NODE_ENV: "Production",
+      FIX_EC_ZONES: "true",
+      FIX_EC_SHIPPING_PROFILE: "true",
+    })
+
+    expect(zones).toContain("FIX_EC_ZONES")
+    expect(zones).toContain("one-time flags")
+    expect(zones).toContain("must be removed")
+    expect(profile).toContain("FIX_EC_SHIPPING_PROFILE")
+    expect(profile).toContain("every deploy")
+    expect(both).toContain("FIX_EC_ZONES and FIX_EC_SHIPPING_PROFILE")
+    expect(
+      productionFixFlagWarning({
+        NODE_ENV: "development",
+        FIX_EC_ZONES: "true",
+        FIX_EC_SHIPPING_PROFILE: "true",
+      })
+    ).toBeUndefined()
+    expect(
+      productionFixFlagWarning({
+        NODE_ENV: "production",
+        FIX_EC_ZONES: "1",
+        FIX_EC_SHIPPING_PROFILE: "false",
+      })
+    ).toBeUndefined()
+    expect(productionFixFlagWarning({ NODE_ENV: "staging" })).toBeUndefined()
   })
 
   it("moves the option only when FIX_EC_SHIPPING_PROFILE=true", () => {
