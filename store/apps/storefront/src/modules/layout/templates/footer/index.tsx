@@ -3,8 +3,6 @@ import { listCollections } from "@lib/data/collections";
 import { Text, clx } from "@modules/common/components/ui";
 
 import LocalizedClientLink from "@modules/common/components/localized-client-link";
-import MedusaCTA from "@modules/layout/components/medusa-cta";
-
 export default async function Footer() {
   const { collections } = await listCollections({
     fields: "*products",
@@ -27,7 +25,7 @@ export default async function Footer() {
             {productCategories && productCategories?.length > 0 && (
               <div className="flex flex-col gap-y-2">
                 <span className="txt-small-plus text-white">
-                  Categories
+                  Categorías
                 </span>
                 <ul
                   className="grid grid-cols-1 gap-2"
@@ -47,7 +45,7 @@ export default async function Footer() {
 
                     return (
                       <li
-                        className="flex flex-col gap-2 text-white/55 txt-small"
+                        className="flex flex-col gap-2 text-white/75 txt-small"
                         key={c.id}
                       >
                         <LocalizedClientLink
@@ -85,11 +83,11 @@ export default async function Footer() {
             {collections && collections.length > 0 && (
               <div className="flex flex-col gap-y-2">
                 <span className="txt-small-plus text-white">
-                  Collections
+                  Colecciones
                 </span>
                 <ul
                   className={clx(
-                    "grid grid-cols-1 gap-2 text-white/55 txt-small",
+                    "grid grid-cols-1 gap-2 text-white/75 txt-small",
                     {
                       "grid-cols-2": (collections?.length || 0) > 3,
                     }
@@ -110,31 +108,31 @@ export default async function Footer() {
             )}
             <div className="flex flex-col gap-y-2">
               <span className="txt-small-plus text-white">Gato Gang</span>
-              <ul className="grid grid-cols-1 gap-y-2 text-white/55 txt-small">
+              <ul className="grid grid-cols-1 gap-y-2 text-white/75 txt-small">
                 <li>
                   <LocalizedClientLink href="/store" className="hover:text-neon">
-                    Store
+                    Tienda
                   </LocalizedClientLink>
                 </li>
                 <li>
                   <LocalizedClientLink href="/account" className="hover:text-neon">
-                    Account
+                    Cuenta
                   </LocalizedClientLink>
                 </li>
                 <li>
                   <LocalizedClientLink href="/cart" className="hover:text-neon">
-                    Cart
+                    Carrito
                   </LocalizedClientLink>
                 </li>
               </ul>
             </div>
           </div>
         </div>
-        <div className="flex w-full mb-16 justify-between text-white/40">
+        <div className="flex w-full mb-16 justify-between text-white/75">
           <Text className="txt-compact-small">
-            © {new Date().getFullYear()} Gato Gang. All rights reserved.
+            © {new Date().getFullYear()} Gato Gang. Todos los derechos
+            reservados.
           </Text>
-          <MedusaCTA />
         </div>
       </div>
     </footer>

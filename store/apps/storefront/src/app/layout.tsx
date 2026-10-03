@@ -28,7 +28,7 @@ export const metadata: Metadata = {
 export default function RootLayout(props: { children: React.ReactNode }) {
   return (
     <html
-      lang="en"
+      lang="es"
       data-mode="dark"
       className={`dark ${sora.variable} ${ibmPlexMono.variable} bg-ink-950`}
     >

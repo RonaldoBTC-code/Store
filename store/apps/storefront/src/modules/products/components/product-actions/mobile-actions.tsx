@@ -111,7 +111,7 @@ const MobileActions: React.FC<MobileActionsProps> = ({
                   <span>
                     {variant
                       ? Object.values(options).join(" / ")
-                      : "Select Options"}
+                      : "Elegir"}
                   </span>
                   <ChevronDown />
                 </div>
@@ -124,12 +124,12 @@ const MobileActions: React.FC<MobileActionsProps> = ({
                 data-testid="mobile-cart-button"
               >
                 {!variant
-                  ? "Select variant"
+                  ? "Elige una opción"
                   : !inStock
-                  ? "Out of stock"
+                  ? "Agotada"
                   : isAdding
-                  ? "Adding…"
-                  : "Add to cart"}
+                  ? "Agregando…"
+                  : "Agregar al carrito"}
               </Button>
             </div>
           </div>
@@ -167,8 +167,9 @@ const MobileActions: React.FC<MobileActionsProps> = ({
                   <div className="w-full flex justify-end pr-6">
                     <button
                       onClick={close}
-                      className="flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-ink-900 text-white"
+                      className="focus-neon flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-ink-900 text-white"
                       data-testid="close-modal-button"
+                      aria-label="Cerrar opciones"
                     >
                       <X />
                     </button>

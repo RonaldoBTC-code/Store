@@ -3,8 +3,8 @@ import { Metadata } from "next"
 import LoginTemplate from "@modules/account/templates/login-template"
 
 export const metadata: Metadata = {
-  title: "Sign in | Gato Gang",
-  description: "Sign in to your Gato Gang account.",
+  title: "Entrar | Gato Gang",
+  description: "Entra a tu cuenta de Gato Gang.",
 }
 
 export default function Login() {

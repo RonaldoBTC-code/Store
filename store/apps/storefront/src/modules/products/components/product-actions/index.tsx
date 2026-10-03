@@ -171,12 +171,12 @@ export default function ProductActions({
           data-testid="add-product-button"
         >
           {!selectedVariant
-            ? "Select variant"
+            ? "Elige una opción"
             : !inStock || !isValidVariant
-            ? "Out of stock"
+            ? "Agotada"
             : isAdding
-            ? "Adding…"
-            : "Add to cart"}
+            ? "Agregando…"
+            : "Agregar al carrito"}
         </Button>
         {error && (
           <p className="text-sm text-red-400" role="alert">

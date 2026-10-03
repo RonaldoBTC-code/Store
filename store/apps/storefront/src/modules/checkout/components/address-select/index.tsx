@@ -36,7 +36,7 @@ const AddressSelect = ({
     <Listbox onChange={handleSelect} value={selectedAddress?.id}>
       <div className="relative">
         <Listbox.Button
-          className="relative flex w-full cursor-default items-center justify-between rounded-rounded border border-white/15 bg-ink-900 px-4 py-[10px] text-left text-base-regular text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
+          className="focus-neon relative flex w-full cursor-default items-center justify-between rounded-rounded border border-white/15 bg-ink-900 px-4 py-[10px] text-left text-base-regular text-white"
           data-testid="shipping-address-select"
         >
           {({ open }) => (
@@ -44,7 +44,7 @@ const AddressSelect = ({
               <span className="block truncate">
                 {selectedAddress
                   ? selectedAddress.address_1
-                  : "Choose an address"}
+                  : "Elige una dirección"}
               </span>
               <ChevronUpDown
                 className={clx("transition-rotate duration-200", {
@@ -61,7 +61,7 @@ const AddressSelect = ({
           leaveTo="opacity-0"
         >
           <Listbox.Options
-            className="absolute z-20 max-h-60 w-full overflow-auto border border-white/15 bg-ink-900 text-small-regular text-white focus:outline-none sm:text-sm"
+            className="absolute z-20 max-h-60 w-full overflow-auto border border-white/15 bg-ink-900 text-small-regular text-white sm:text-sm"
             data-testid="shipping-address-options"
           >
             {addresses.map((address) => {
@@ -69,7 +69,7 @@ const AddressSelect = ({
                 <Listbox.Option
                   key={address.id}
                   value={address.id}
-                  className="cursor-default select-none relative pl-6 pr-10 hover:bg-gray-50 py-4"
+                  className="focus-neon cursor-default select-none relative pl-6 pr-10 hover:bg-white/10 py-4"
                   data-testid="shipping-address-option"
                 >
                   <div className="flex gap-x-4 items-start">

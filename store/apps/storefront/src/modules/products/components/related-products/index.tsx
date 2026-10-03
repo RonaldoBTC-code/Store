@@ -49,9 +49,9 @@ export default async function RelatedProducts({
   return (
     <div className="product-page-constraint">
       <div className="flex flex-col items-center text-center mb-16">
-        <span className="editorial-hud mb-6 text-neon">Related products</span>
+        <span className="editorial-hud mb-6 text-neon">También te puede ir</span>
         <p className="max-w-lg font-display text-3xl font-extrabold text-white">
-          You might also want to check out these products.
+          Misma calle, otra gorra.
         </p>
       </div>
 

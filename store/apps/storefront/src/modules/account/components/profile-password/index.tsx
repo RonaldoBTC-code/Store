@@ -30,9 +30,9 @@ const ProfilePassword: React.FC<MyInformationProps> = ({ customer: _customer }) 
       className="w-full"
     >
       <AccountInfo
-        label="Password"
+        label="Contraseña"
         currentInfo={
-          <span>The password is not shown for security reasons</span>
+          <span>No mostramos la contraseña</span>
         }
         isSuccess={successState}
         isError={false}
@@ -40,23 +40,23 @@ const ProfilePassword: React.FC<MyInformationProps> = ({ customer: _customer }) 
         clearState={clearState}
         data-testid="account-password-editor"
       >
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 small:grid-cols-2">
           <Input
-            label="Old password"
+            label="Contraseña actual"
             name="old_password"
             required
             type="password"
             data-testid="old-password-input"
           />
           <Input
-            label="New password"
+            label="Contraseña nueva"
             type="password"
             name="new_password"
             required
             data-testid="new-password-input"
           />
           <Input
-            label="Confirm password"
+            label="Confirmar contraseña"
             type="password"
             name="confirm_password"
             required

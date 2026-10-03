@@ -6,16 +6,16 @@ const SignInPrompt = () => {
     <div className="flex items-center justify-between bg-ink-950 text-white">
       <div>
         <Heading level="h2" className="txt-xlarge text-white">
-          Already have an account?
+          ¿Ya tienes cuenta?
         </Heading>
-        <Text className="txt-medium mt-2 text-white/65">
-          Sign in for a better experience.
+        <Text className="txt-medium mt-2 text-white/75">
+          Entra y seguimos más rápido.
         </Text>
       </div>
       <div>
         <LocalizedClientLink href="/account">
           <Button variant="secondary" className="h-10" data-testid="sign-in-button">
-            Sign in
+            Entrar
           </Button>
         </LocalizedClientLink>
       </div>

@@ -19,7 +19,7 @@ const Thumbnail: React.FC<ThumbnailProps> = ({
   thumbnail,
   images,
   size = "small",
-  alt = "Gato Gang dad hat",
+  alt = "Gorra dad hat de Gato Gang",
   className,
   "data-testid": dataTestid,
 }) => {
@@ -53,7 +53,7 @@ const ImageOrPlaceholder = ({
   return image ? (
     <Image
       src={image}
-      alt={alt || "Gato Gang dad hat"}
+      alt={alt || "Gorra dad hat de Gato Gang"}
       className="absolute inset-0 bg-transparent object-contain object-center p-3"
       draggable={false}
       quality={90}

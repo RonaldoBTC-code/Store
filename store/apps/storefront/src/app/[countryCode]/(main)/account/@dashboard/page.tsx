@@ -6,8 +6,8 @@ import { retrieveCustomer } from "@lib/data/customer"
 import { listOrders } from "@lib/data/orders"
 
 export const metadata: Metadata = {
-  title: "Account | Gato Gang",
-  description: "Overview of your Gato Gang account activity.",
+  title: "Cuenta | Gato Gang",
+  description: "Resumen de tu actividad en Gato Gang.",
 }
 
 export default async function OverviewTemplate() {
